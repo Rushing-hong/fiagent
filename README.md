@@ -26,6 +26,19 @@ You: Backtest Moutai with dual-MA strategy, 2020-2025
 🤖: [calls run_backtest] Annual return 12.5%, Sharpe 1.15, max drawdown -22.3%...
 ```
 
+---
+
+## Design References
+
+Built on ideas from two excellent open-source projects:
+
+| Project | What we took | GitHub |
+|------|------|------|
+| **Vibe-Trading** | Skills architecture — progressive disclosure, `SKILL.md` layout, domain skill categorization | [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) |
+| **OpenCode** | Streaming pipeline — reasoning/content/tool_call delta merging, collapsible UI with `e`/digit-key navigation | [OhMyOpenCode/opencode](https://github.com/OhMyOpenCode/opencode) |
+
+---
+
 ## Quick Start
 
 ```bash
@@ -138,15 +151,6 @@ fiagent/
 ├── prompts/              # System prompt templates
 └── tests/                # Unit tests
 ```
-
----
-
-## Design References
-
-| Source | Inspiration |
-|------|------|
-| **OpenCode** | Terminal UI collapse/expand, reasoning folded by default, `e`/digit-key interaction |
-| **Vibe-Trading** | ReAct Agent skeleton, A-share toolchain, Skills organization |
 
 ---
 
