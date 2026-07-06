@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "session.start": ["hooks/log.py"],
+    "turn.start": ["hooks/log.py"],
+    "tool.before": ["hooks/log.py"],
+    "tool.after": ["hooks/log.py"],
+    "llm.before": ["hooks/log.py"],
+    "llm.after": ["hooks/log.py"]
+  }
+}

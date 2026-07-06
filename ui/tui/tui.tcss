@@ -1,0 +1,312 @@
+/* fiagent TUI — dark terminal, GitHub-inspired */
+
+Screen {
+    layout: vertical;
+    background: #0d1117;
+}
+
+Header {
+    background: #010409;
+    color: #58a6ff;
+    text-style: bold;
+    dock: top;
+    height: 1;
+}
+
+Footer {
+    background: #010409;
+    color: #484f58;
+}
+
+#chat {
+    height: 1fr;
+    background: #0d1117;
+    padding: 1 2;
+    scrollbar-background: #0d1117;
+    scrollbar-color: #30363d;
+}
+
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: #161b22;
+    color: #8b949e;
+    padding: 0 2;
+    border-top: solid #21262d;
+}
+
+#live-strip {
+    dock: bottom;
+    height: 0;
+    overflow-y: auto;
+    scrollbar-size-vertical: 1;
+    background: #161b22;
+    color: #c9d1d9;
+    padding: 0 2;
+    border-top: solid #388bfd;
+    text-wrap: wrap;
+}
+
+#live-strip.-active {
+    height: 4;
+    max-height: 5;
+}
+
+#prompt, .prompt-input {
+    dock: bottom;
+    height: 6;
+    min-height: 3;
+    max-height: 12;
+    background: #161b22;
+    border: none;
+    border-top: solid #30363d;
+    padding: 0 1;
+    color: #6e7681;
+}
+
+#prompt .text-area--cursor {
+    background: #58a6ff;
+}
+
+#prompt:focus, .prompt-input:focus {
+    border-top: solid #58a6ff;
+    background: #1c2128;
+    color: #f0f6fc;
+}
+
+#prompt.-disabled, .prompt-input.-disabled {
+    opacity: 0.5;
+}
+
+/* --- startup card --- */
+.card-startup {
+    border: round #30363d;
+    background: #161b22;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    color: #e6edf3;
+}
+
+.card-hint {
+    color: #484f58;
+    margin: 0 0 1 0;
+    padding: 0 1;
+}
+
+/* --- user message (compact) --- */
+.line-user {
+    height: auto;
+    width: 100%;
+    color: #7ee787;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border-left: tall #238636;
+}
+
+.line-activity {
+    height: auto;
+    color: #8b949e;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border-left: tall #484f58;
+}
+
+.stream-md {
+    background: transparent;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    color: #c9d1d9;
+}
+
+.stream-plain {
+    text-wrap: wrap;
+    color: #c9d1d9;
+}
+
+/* 思考流式块（黄色，OpenCode ReasoningPart） */
+.think-block {
+    width: 100%;
+    height: auto;
+    layout: vertical;
+    background: #1c1810;
+    border-left: tall #d29922;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.think-label {
+    height: auto;
+    color: #e3b341;
+    padding: 0;
+    margin: 0;
+}
+
+.think-stream {
+    color: #e3b341;
+    text-wrap: wrap;
+}
+
+/* 流式预览：固定高度，避免聊天区随 token 增高 */
+.stream-live {
+    height: 14;
+    max-height: 14;
+    overflow-y: auto;
+    scrollbar-size-vertical: 1;
+}
+
+.stream-done {
+    height: auto;
+    overflow-y: hidden;
+}
+
+/* --- assistant reply (compact) --- */
+.reply-block {
+    width: 100%;
+    height: auto;
+    layout: vertical;
+    background: #161b22;
+    border-left: tall #388bfd;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.reply-label {
+    height: auto;
+    padding: 0;
+    margin: 0 0 0 0;
+}
+
+.reply-block Markdown {
+    background: transparent;
+    height: auto;
+    padding: 0;
+    margin: 0;
+}
+
+.reply-block MarkdownH1,
+.reply-block MarkdownH2,
+.reply-block MarkdownH3 {
+    color: #e6edf3;
+}
+
+.reply-block MarkdownBulletList {
+    color: #c9d1d9;
+}
+
+/* legacy full bubble */
+.bubble-assistant {
+    width: 100%;
+    background: #161b22;
+    border: round #388bfd;
+    padding: 1 2;
+    margin: 1 0;
+}
+
+/* legacy user bubble */
+.bubble-user {
+    width: 100%;
+    background: #12261e;
+    border: round #238636;
+    padding: 0 1;
+    margin: 1 0;
+    color: #7ee787;
+}
+
+/* --- round divider --- */
+.round-rule-label {
+    color: #8b949e;
+    margin: 1 0 0 0;
+    height: auto;
+}
+
+.round-rule {
+    color: #30363d;
+    margin: 0 0 1 0;
+}
+
+/* --- inline lines --- */
+.line-tool {
+    color: #79c0ff;
+    margin: 0 0 0 2;
+    padding: 0 1;
+}
+
+.line-hook {
+    color: #484f58;
+    margin: 0 0 0 2;
+}
+
+.line-info {
+    color: #8b949e;
+    margin: 0 0 0 1;
+}
+
+.line-warn {
+    color: #d29922;
+    margin: 0 0 0 1;
+}
+
+.line-err {
+    color: #f85149;
+    margin: 0 0 0 1;
+    border-left: tall #f85149;
+    padding-left: 1;
+}
+
+/* --- collapsible folds --- */
+Collapsible {
+    margin: 0 0 1 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+}
+
+Collapsible > CollapsibleTitle {
+    background: #161b22;
+    color: #8b949e;
+    padding: 0 1;
+    height: auto;
+    border: round #30363d;
+}
+
+Collapsible > CollapsibleTitle:hover {
+    background: #21262d;
+    color: #e6edf3;
+}
+
+Collapsible:focus > CollapsibleTitle {
+    border: round #58a6ff;
+}
+
+.fold-think > CollapsibleTitle {
+    border-left: tall #d29922;
+    color: #e3b341;
+}
+
+.fold-tool > CollapsibleTitle {
+    border-left: tall #58a6ff;
+    color: #79c0ff;
+}
+
+.fold-user > CollapsibleTitle {
+    border-left: tall #3fb950;
+    color: #7ee787;
+}
+
+.fold-reply > CollapsibleTitle {
+    border-left: tall #388bfd;
+    color: #79c0ff;
+}
+
+.fold-body {
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 0 1 1 2;
+    border-left: tall #21262d;
+    margin-left: 1;
+}
+
+.fold-body.-code {
+    color: #a5d6ff;
+}
