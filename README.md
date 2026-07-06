@@ -35,7 +35,7 @@ Built on ideas from two excellent open-source projects:
 | Project | What we took | GitHub |
 |------|------|------|
 | **Vibe-Trading** | Skills architecture — progressive disclosure, `SKILL.md` layout, domain skill categorization | [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) |
-| **OpenCode** | Streaming pipeline — reasoning/content/tool_call delta merging, collapsible UI with `e`/digit-key navigation | [OhMyOpenCode/opencode](https://github.com/OhMyOpenCode/opencode) |
+| **OpenCode** | Streaming pipeline — reasoning/content/tool_call delta merging, collapsible UI with `e`/digit-key navigation | [anomalyco/opencode](https://github.com/anomalyco/opencode) |
 
 ---
 
