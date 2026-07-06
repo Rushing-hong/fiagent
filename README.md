@@ -1,8 +1,8 @@
 # fiagent
 
 <p align="center">
-  <b>面向中国市场的 AI 量化研究 Agent</b><br>
-  DeepSeek ReAct Agent · 40+ 工具 · 49 个领域技能 · 双界面
+  <b>AI Quant Research Agent for the Chinese Market</b><br>
+  DeepSeek ReAct Agent · 40+ Tools · 49 Domain Skills · Dual UI
 </p>
 
 <p align="center">
@@ -13,150 +13,150 @@
 
 ---
 
-fiagent 是一个运行在终端里的 AI 投研助手。用自然语言对话完成：行情查询、策略回测、因子分析、财务研究、交易复盘。覆盖 **A 股、期货、可转债、ETF 期权**四大市场。
+fiagent is a terminal-based AI investment research assistant. Chat in natural language to query market data, backtest strategies, analyze factors, research fundamentals, or review your trades — across **A-shares, futures, convertible bonds, and ETF options**.
 
 ```
-你: 帮我看看AI算力板块现在拥挤度怎么样
-🤖: [调用 get_market_breadth] TMT成交占比 38.5%，极度拥挤。通信ETF上半年净流入443亿...
+You: How crowded is the AI computing sector right now?
+🤖: [calls get_market_breadth] TMT turnover 38.5%, extremely crowded. Telecom ETF net inflow ¥44.3B H1...
 
-你: 筛选 PE<15 且 ROE>20 的股票，市值>100亿
-🤖: [调用 screen_fundamental] 找到23只，前5: 茅台PE=14.2 ROE=28%...
+You: Screen stocks with PE<15, ROE>20%, market cap>¥100B
+🤖: [calls screen_fundamental] Found 23. Top 5: Moutai PE=14.2 ROE=28%...
 
-你: 回测茅台双均线策略 2020-2025
-🤖: [调用 run_backtest] 年化收益12.5%，夏普1.15，最大回撤-22.3%...
+You: Backtest Moutai with dual-MA strategy, 2020-2025
+🤖: [calls run_backtest] Annual return 12.5%, Sharpe 1.15, max drawdown -22.3%...
 ```
 
-## 快速开始
+## Quick Start
 
 ```bash
-# 1. 安装
-git clone https://github.com/<your-username>/fiagent.git
+# 1. Install
+git clone https://github.com/Rushing-hong/fiagent.git
 cd fiagent
 pip install -r requirements.txt
 
-# 2. 设置 API Key（二选一）
-echo DEEPSEEK_API_KEY=sk-xxxxxxxx > .env   # 方式A: 写入文件
-set DEEPSEEK_API_KEY=sk-xxxxxxxx           # 方式B: 环境变量（首次运行会引导输入）
+# 2. Set API Key (pick one)
+echo DEEPSEEK_API_KEY=sk-xxxxxxxx > .env   # Option A: write to .env
+set DEEPSEEK_API_KEY=sk-xxxxxxxx           # Option B: env var (prompted on first run)
 
-# 3. 启动
-python agent.py          # Textual TUI 全屏界面（推荐）
-python agent.py --plain  # Rich 纯终端界面
+# 3. Launch
+python agent.py          # Textual TUI — recommended
+python agent.py --plain  # Rich terminal mode
 ```
 
-**对话内命令**: `/help` `/new` `/sessions` `/resume <id>` `/reload` `/thinking` `/tui` `/plain`
+**In-chat commands**: `/help` `/new` `/sessions` `/resume <id>` `/reload` `/thinking` `/tui` `/plain`
 
-**环境变量**:
-| 变量 | 说明 |
+**Environment variables**:
+| Variable | Description |
 |------|------|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥（必填） |
-| `FIAGENT_TZ` | 时区，默认 `Asia/Shanghai` |
-| `FIAGENT_MAX_TOOL_ROUNDS` | 最大工具调用轮次，默认 10 |
-| `FIAGENT_IWENCAI_KEY` | 同花顺问财 API Key（可选） |
-| `FIAGENT_PLAIN_UI` | 设为 `1` 默认纯终端模式 |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (required) |
+| `FIAGENT_TZ` | Timezone, default `Asia/Shanghai` |
+| `FIAGENT_MAX_TOOL_ROUNDS` | Max tool-call rounds, default 10 |
+| `FIAGENT_IWENCAI_KEY` | Hithink iwencai API key (optional) |
+| `FIAGENT_PLAIN_UI` | Set to `1` for plain terminal mode |
 
 ---
 
-## 功能概览
+## Features
 
-### 40+ 工具 — 覆盖四大市场
+### 40+ Tools — Four Markets
 
-| 市场 | 工具 | 说明 |
+| Market | Tools | Purpose |
 |------|------|------|
-| **A 股** | `get_market_data` `screen_market` `screen_fundamental` `iwencai_search` | 行情/筛选/选股 |
-| | `get_dragon_tiger` `get_margin_trading` `get_block_trades` | 龙虎榜/两融/大宗 |
-| | `get_fund_flow` `get_northbound_flow` `get_etf_flow` | 资金流向 |
-| | `get_financial_statements` `get_research_reports` `get_stock_news` | 财报/研报/新闻 |
-| | `get_shareholder_count` `get_lockup_expiry` `get_sector_info` | 股东/解禁/板块 |
-| | `get_limit_board` `get_dividend_calendar` `get_insider_trades` | 涨停板/分红/增减持 |
-| | `get_ipo_calendar` `get_index_constituents` `get_yield_curve` | 新股/指数成分/利率 |
-| | `get_market_breadth` | TMT 拥挤度/板块涨跌比 |
-| **期货** | `get_futures_quote` | 6 大交易所（中金所/上期所/大商所/郑商所/能源中心/广期所） |
-| **可转债** | `get_cb_list` `screen_cb` | 全市场转债快照+双低/低价/YTM 筛选 |
-| **期权** | `get_option_chain` | ETF 期权 T 型报价+希腊字母+PCR |
-| **量化** | `pattern` `factor_analysis` `run_backtest` `analyze_trade_journal` | 形态识别/因子评估/策略回测/交易复盘 |
-| **通用** | `read` `write` `edit` `grep` `read_url` `web_search` | 文件/网页/搜索 |
+| **A-Shares** | `get_market_data` `screen_market` `screen_fundamental` `iwencai_search` | Quotes / screening / stock picking |
+| | `get_dragon_tiger` `get_margin_trading` `get_block_trades` | Dragon & tiger board / margin / block trades |
+| | `get_fund_flow` `get_northbound_flow` `get_etf_flow` | Capital flows |
+| | `get_financial_statements` `get_research_reports` `get_stock_news` | Financials / analyst reports / news |
+| | `get_shareholder_count` `get_lockup_expiry` `get_sector_info` | Shareholders / lockup expiry / sectors |
+| | `get_limit_board` `get_dividend_calendar` `get_insider_trades` | Limit boards / dividends / insider trades |
+| | `get_ipo_calendar` `get_index_constituents` `get_yield_curve` | IPOs / index constituents / yield curve |
+| | `get_market_breadth` | TMT crowding / sector breadth |
+| **Futures** | `get_futures_quote` | 6 exchanges (CFFEX/SHFE/INE/DCE/ZCE/GFEX) |
+| **CB** | `get_cb_list` `screen_cb` | Full market CB snapshot + dual-low / bargain / YTM screening |
+| **Options** | `get_option_chain` | ETF option T-quote + Greeks + PCR |
+| **Quant** | `pattern` `factor_analysis` `run_backtest` `analyze_trade_journal` | Pattern detection / factor evaluation / backtesting / trade journal analysis |
+| **General** | `read` `write` `edit` `grep` `read_url` `web_search` | File / web / search |
 
-### 策略回测引擎
+### Backtesting Engine
 
 ```
-get_market_data → [内置策略 OR 自定义信号] → run_backtest → 绩效报告
+get_market_data → [built-in strategy OR custom signal] → run_backtest → performance report
 ```
 
-4 种内置策略（MA 双均线/RSI/动量/买入持有）+ 自定义信号 CSV 模式。自动执行 A 股规则：T+1、涨跌停、印花税 0.05%、佣金 0.03%（2026.7.6 新规适配）。
+4 built-in strategies (MA crossover / RSI / Momentum / Buy & Hold) + custom signal CSV mode. A-share rules enforced automatically: T+1 settlement, price limits, stamp duty 0.05%, commission 0.03% (2026.7.6 rules).
 
-### 交易日记分析
+### Trade Journal Analysis
 
-上传同花顺/东方财富/富途交割单 → 自动 FIFO 配对 → 输出：
+Upload Hithink Flush / Eastmoney / Futu trade statements → automatic FIFO pairing → outputs:
 
-- **交易画像**：胜率、盈亏比、夏普、最大回撤、时段分布
-- **行为偏差诊断**：处置效应、过度交易、追涨、锚定效应
-- **策略风格识别**：短线打板/波段操作/长期价值/高频交易
+- **Trading profile**: win rate, profit-loss ratio, Sharpe, max drawdown, intraday distribution
+- **Behavioral diagnostics**: disposition effect, overtrading, chasing, anchoring bias
+- **Strategy style**: scalping / swing trading / long-term value / high-frequency
 
-### 49 个领域技能
+### 49 Domain Skills
 
-渐进披露式设计——system prompt 中只注入摘要，Agent 按需 `load_skill` 加载全文。覆盖：
+Progressive disclosure — only summaries in the system prompt; the Agent loads full text via `load_skill` as needed. Coverage:
 
-| 类别 | 技能 |
+| Category | Skills |
 |------|------|
-| 技术分析 | `technical-analysis`(15种蜡烛+7大指标+缠论) |
-| 基本面 | `financial-statement`(三表勾稽+12造假红旗+杜邦) `valuation-model`(DCF/DDM/PE-Band) |
-| 策略 | `strategy-generate` `multi-factor` `pair-trading` `sector-rotation` |
-| 资产配置 | `asset-allocation`(MPT/BL/风险预算/全天候) `risk-analysis`(VaR/CVaR/MC) |
-| 衍生品 | `convertible-bond` `options-strategy` `options-payoff` |
-| 行为金融 | `behavioral-finance` `sentiment-analysis` `market-microstructure` |
-| 宏观/行业 | `macro-analysis` `ai-industry-chain` `commodity-analysis` `credit-analysis` |
-| 市场 | `etf-analysis`(878行最完整) `fund-analysis` `dividend-analysis` `earnings-analysis` |
-| 其他 | `report-generate` `backtest-diagnose` `regulatory-knowledge` `event-driven` 等 |
+| Technical | `technical-analysis` (15 candlestick patterns + 7 indicators + Chan theory) |
+| Fundamentals | `financial-statement` (3-statement linkage + 12 red flags + DuPont) `valuation-model` (DCF/DDM/PE-Band) |
+| Strategy | `strategy-generate` `multi-factor` `pair-trading` `sector-rotation` |
+| Allocation | `asset-allocation` (MPT/BL/risk budget/all-weather) `risk-analysis` (VaR/CVaR/MC) |
+| Derivatives | `convertible-bond` `options-strategy` `options-payoff` |
+| Behavioral | `behavioral-finance` `sentiment-analysis` `market-microstructure` |
+| Macro/Sector | `macro-analysis` `ai-industry-chain` `commodity-analysis` `credit-analysis` |
+| Market | `etf-analysis` `fund-analysis` `dividend-analysis` `earnings-analysis` |
+| Others | `report-generate` `backtest-diagnose` `regulatory-knowledge` `event-driven` etc. |
 
 ---
 
-## 架构
+## Architecture
 
 ```
-用户输入
+User Input
   → Hooks (turn.start)
-  → core/loop  ReAct 循环 (最多10轮)
-       ├─ core/stream  流式 DeepSeek V4 (思考链+正文+tool_calls)
-       ├─ tools  并行只读(8路) / 串行写入
+  → core/loop  ReAct loop (max 10 rounds)
+       ├─ core/stream  Streaming DeepSeek V4 (reasoning + text + tool_calls)
+       ├─ tools  Parallel readonly (8 workers) / serial writes
        ├─ Hooks (llm.before/after, tool.before/after)
-       └─ ui  展示
-  → session/SQLite 持久化
+       └─ ui  Render
+  → session/SQLite  Persist
   → Hooks (turn.end)
 ```
 
 ```
 fiagent/
-├── agent.py              # 入口
-├── core/                 # ReAct 循环 + 流式 LLM + CLI + 命令
-├── session/              # SQLite 多会话持久化
-├── hooks/                # 可插拔事件钩子
-├── ui/                   # Rich 纯终端 + Textual TUI
-├── market/               # 数据源(东财/akshare) + 回测引擎
-├── tools/                # 40+ Agent 可调用工具
-├── skills/               # 49 个领域技能文档
-├── analysis/             # 因子分析核心算法
-├── prompts/              # System prompt 模板
-└── tests/                # 单元测试
+├── agent.py              # Entry point
+├── core/                 # ReAct loop + streaming LLM + CLI + commands
+├── session/              # SQLite multi-session persistence
+├── hooks/                # Pluggable event hooks
+├── ui/                   # Rich terminal + Textual TUI
+├── market/               # Data sources (Eastmoney/akshare) + backtesting engine
+├── tools/                # 40+ agent-callable tools
+├── skills/               # 49 domain skill documents
+├── analysis/             # Factor analysis core algorithms
+├── prompts/              # System prompt templates
+└── tests/                # Unit tests
 ```
 
 ---
 
-## 设计参考
+## Design References
 
-| 来源 | 借鉴 |
+| Source | Inspiration |
 |------|------|
-| **OpenCode** | 终端 UI 折叠/展开、思考过程默认折叠、`e`/数字键交互 |
-| **Vibe-Trading** | ReAct Agent 骨架、A 股工具链、Skills 组织 |
+| **OpenCode** | Terminal UI collapse/expand, reasoning folded by default, `e`/digit-key interaction |
+| **Vibe-Trading** | ReAct Agent skeleton, A-share toolchain, Skills organization |
 
 ---
 
-## 贡献
+## Contributing
 
-欢迎提交 PR！新增工具或技能请参考 [CONTRIBUTING.md](CONTRIBUTING.md)。
+PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for tool and skill guidelines.
 
-- **新工具**：在 `tools/` 继承 `BaseTool`，`/reload` 自动发现
-- **新技能**：在 `skills/<name>/SKILL.md` 编写说明，Agent 按需加载
-- **新 Hook**：在 `hooks/` 编写模块，在 `hooks.json` 注册
+- **New tool**: Subclass `BaseTool` in `tools/`, auto-discovered on `/reload`
+- **New skill**: Write `skills/<name>/SKILL.md`, Agent loads on demand
+- **New hook**: Write a module in `hooks/`, register in `hooks.json`
 
 ## License
 
