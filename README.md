@@ -79,6 +79,7 @@ python agent.py --plain  # Rich terminal mode
 | | `get_dragon_tiger` `get_margin_trading` `get_block_trades` | Dragon & tiger board / margin / block trades |
 | | `get_fund_flow` `get_northbound_flow` `get_etf_flow` | Capital flows |
 | | `get_financial_statements` `get_research_reports` `get_stock_news` | Financials / analyst reports / news |
+| | `calc_dupont` `check_red_flags` `screen_peers` `calc_dcf` `track_consensus` | DuPont / red flags / peers / DCF / consensus revision |
 | | `get_shareholder_count` `get_lockup_expiry` `get_sector_info` | Shareholders / lockup expiry / sectors |
 | | `get_limit_board` `get_dividend_calendar` `get_insider_trades` | Limit boards / dividends / insider trades |
 | | `get_ipo_calendar` `get_index_constituents` `get_yield_curve` | IPOs / index constituents / yield curve |
@@ -86,7 +87,9 @@ python agent.py --plain  # Rich terminal mode
 | **Futures** | `get_futures_quote` | 6 exchanges (CFFEX/SHFE/INE/DCE/ZCE/GFEX) |
 | **CB** | `get_cb_list` `screen_cb` | Full market CB snapshot + dual-low / bargain / YTM screening |
 | **Options** | `get_option_chain` | ETF option T-quote + Greeks + PCR |
-| **Quant** | `pattern` `factor_analysis` `run_backtest` `analyze_trade_journal` | Pattern detection / factor evaluation / backtesting / trade journal analysis |
+| **Quant** | `pattern` `factor_analysis` `run_backtest` `analyze_trade_journal` | Pattern / factors / backtest / journal |
+| | `build_tradable_universe` `build_event_signals` `blend_black_litterman` | Universe / events / Black-Litterman |
+| | `suggest_hedge_ratio` `analyze_portfolio_risk` `load_pit_universe` | Vol timing / Barra-lite risk / PIT universe |
 | **General** | `read` `write` `edit` `grep` `read_url` `web_search` | File / web / search |
 
 ### Backtesting Engine
@@ -95,7 +98,9 @@ python agent.py --plain  # Rich terminal mode
 get_market_data → [built-in strategy OR custom signal] → run_backtest → performance report
 ```
 
-4 built-in strategies (MA crossover / RSI / Momentum / Buy & Hold) + custom signal CSV mode. A-share rules enforced automatically: T+1 settlement, price limits, stamp duty 0.05%, commission 0.03% (2026.7.6 rules).
+4 built-in strategies (MA crossover / RSI / Momentum / Buy & Hold) + custom signal CSV / multi-sleeve mode.
+
+A-share realism (enabled by default where noted): T+1, limit-lock reject, next-bar open fill (`signal_lag=1`), √ impact cost, halt skip, optional cash interest, futures hedge, industry & style exposure caps. Optional near-term minute bars via `interval`. Roadmap: [docs/BACKTEST_ROADMAP.md](docs/BACKTEST_ROADMAP.md).
 
 ### Trade Journal Analysis
 
@@ -165,3 +170,9 @@ PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for tool and skill guideline
 ## License
 
 MIT
+
+---
+
+## Changelog
+
+Release history: [CHANGELOG.md](CHANGELOG.md)

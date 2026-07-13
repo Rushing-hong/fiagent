@@ -293,3 +293,9 @@ get_dividend_calendar(code="600519", year="2026")
 | `read` / `write` / `edit` / `grep` | 工作区文件操作 |
 | `read_url` / `web_search` | 网页抓取+搜索 |
 | `load_skill` / `save_skill` / `patch_skill` / `delete_skill` | Skill 管理 |
+
+---
+
+## 后续：2026-07-13 财务计算 + 回测 P0–P5
+
+已迁入根目录 [CHANGELOG.md](../CHANGELOG.md) 的 **[0.2.0]** 条目（`calc_dupont` / DCF / 对冲与风格帽 / Barra-lite / 点位池等）。路线图见 [BACKTEST_ROADMAP.md](BACKTEST_ROADMAP.md)、[FINANCIAL_MODULES_PLAN.md](FINANCIAL_MODULES_PLAN.md)。
