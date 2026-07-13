@@ -1,0 +1,285 @@
+"""本地研究库：分钟/日线缓存、一致预期快照、可交易池点位快照。
+
+路径默认 data/research.db（gitignore）。多次拉取后可累积近端分钟与共识历史。
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from paths import DATA_DIR
+
+DB_PATH = DATA_DIR / "research.db"
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class ResearchStore:
+    def __init__(self, db_path: Path = DB_PATH) -> None:
+        self.db_path = db_path
+        self._local = threading.local()
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._ensure()
+
+    def _conn(self) -> sqlite3.Connection:
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = sqlite3.connect(self.db_path, check_same_thread=False)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA journal_mode = WAL")
+            self._local.conn = c
+        return c
+
+    def _ensure(self) -> None:
+        conn = self._conn()
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS bars (
+                code TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                trade_date TEXT NOT NULL,
+                open REAL, high REAL, low REAL, close REAL, volume REAL,
+                PRIMARY KEY (code, interval, trade_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_bars_range
+                ON bars(code, interval, trade_date);
+
+            CREATE TABLE IF NOT EXISTS consensus_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                asof TEXT NOT NULL,
+                source TEXT NOT NULL,
+                fiscal_year TEXT,
+                eps REAL,
+                meta_json TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_cons_code
+                ON consensus_snapshots(code, asof);
+
+            CREATE TABLE IF NOT EXISTS universe_snapshots (
+                asof TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT 'default',
+                codes_json TEXT NOT NULL,
+                meta_json TEXT,
+                PRIMARY KEY (asof, name)
+            );
+            """
+        )
+        conn.commit()
+
+    def upsert_bars(
+        self,
+        code: str,
+        interval: str,
+        rows: list[dict[str, Any]],
+    ) -> int:
+        if not rows:
+            return 0
+        conn = self._conn()
+        n = 0
+        for r in rows:
+            td = str(r.get("trade_date") or "")
+            if not td:
+                continue
+            conn.execute(
+                """
+                INSERT INTO bars(code, interval, trade_date, open, high, low, close, volume)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(code, interval, trade_date) DO UPDATE SET
+                  open=excluded.open, high=excluded.high, low=excluded.low,
+                  close=excluded.close, volume=excluded.volume
+                """,
+                (
+                    code,
+                    interval,
+                    td,
+                    float(r.get("open") or 0),
+                    float(r.get("high") or 0),
+                    float(r.get("low") or 0),
+                    float(r.get("close") or 0),
+                    float(r.get("volume") or 0),
+                ),
+            )
+            n += 1
+        conn.commit()
+        return n
+
+    def load_bars(
+        self,
+        code: str,
+        interval: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        conn = self._conn()
+        q = "SELECT trade_date, open, high, low, close, volume FROM bars WHERE code=? AND interval=?"
+        args: list[Any] = [code, interval]
+        if start_date:
+            q += " AND trade_date >= ?"
+            args.append(start_date)
+        if end_date:
+            # include full day for date-only end
+            end_key = end_date if " " in end_date else end_date + " 23:59:59"
+            q += " AND trade_date <= ?"
+            args.append(end_key)
+        q += " ORDER BY trade_date"
+        cur = conn.execute(q, args)
+        return [
+            {
+                "trade_date": row["trade_date"],
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "volume": row["volume"],
+            }
+            for row in cur.fetchall()
+        ]
+
+    def save_consensus(
+        self,
+        code: str,
+        *,
+        source: str,
+        points: list[dict[str, Any]],
+        asof: str | None = None,
+    ) -> int:
+        asof = asof or _now()[:10]
+        conn = self._conn()
+        n = 0
+        for p in points:
+            year = str(p.get("year") or p.get("fiscal_year") or "")
+            eps = p.get("eps")
+            if eps is None:
+                continue
+            conn.execute(
+                """
+                INSERT INTO consensus_snapshots(code, asof, source, fiscal_year, eps, meta_json)
+                VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    code,
+                    asof,
+                    source,
+                    year,
+                    float(eps),
+                    json.dumps({k: v for k, v in p.items() if k not in ("year", "fiscal_year", "eps")}, ensure_ascii=False),
+                ),
+            )
+            n += 1
+        conn.commit()
+        return n
+
+    def load_consensus_history(self, code: str, days: int = 365) -> list[dict[str, Any]]:
+        conn = self._conn()
+        cur = conn.execute(
+            """
+            SELECT asof, source, fiscal_year, eps, meta_json
+            FROM consensus_snapshots
+            WHERE code=?
+            ORDER BY asof ASC
+            """,
+            (code,),
+        )
+        out = []
+        for row in cur.fetchall():
+            out.append({
+                "asof": row["asof"],
+                "source": row["source"],
+                "year": row["fiscal_year"],
+                "eps": row["eps"],
+            })
+        if days > 0 and out:
+            cutoff = (datetime.now() - __import__("datetime").timedelta(days=days)).strftime("%Y-%m-%d")
+            out = [x for x in out if str(x["asof"])[:10] >= cutoff]
+        return out
+
+    def save_universe(
+        self,
+        codes: list[str],
+        *,
+        asof: str | None = None,
+        name: str = "default",
+        meta: dict[str, Any] | None = None,
+    ) -> str:
+        asof = asof or datetime.now().strftime("%Y-%m-%d")
+        conn = self._conn()
+        conn.execute(
+            """
+            INSERT INTO universe_snapshots(asof, name, codes_json, meta_json)
+            VALUES(?,?,?,?)
+            ON CONFLICT(asof, name) DO UPDATE SET
+              codes_json=excluded.codes_json, meta_json=excluded.meta_json
+            """,
+            (asof, name, json.dumps(codes, ensure_ascii=False), json.dumps(meta or {}, ensure_ascii=False)),
+        )
+        conn.commit()
+        return asof
+
+    def load_universe_pit(
+        self,
+        asof: str,
+        *,
+        name: str = "default",
+    ) -> dict[str, Any] | None:
+        """Nearest snapshot on or before asof."""
+        conn = self._conn()
+        cur = conn.execute(
+            """
+            SELECT asof, name, codes_json, meta_json FROM universe_snapshots
+            WHERE name=? AND asof <= ?
+            ORDER BY asof DESC LIMIT 1
+            """,
+            (name, asof),
+        )
+        row = cur.fetchone()
+        if row is None:
+            # fallback: earliest after
+            cur = conn.execute(
+                """
+                SELECT asof, name, codes_json, meta_json FROM universe_snapshots
+                WHERE name=? ORDER BY abs(julianday(asof) - julianday(?)) ASC LIMIT 1
+                """,
+                (name, asof),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "asof": row["asof"],
+            "name": row["name"],
+            "codes": json.loads(row["codes_json"]),
+            "meta": json.loads(row["meta_json"] or "{}"),
+            "requested_asof": asof,
+        }
+
+    def list_universes(self, name: str = "default", limit: int = 50) -> list[dict[str, Any]]:
+        conn = self._conn()
+        cur = conn.execute(
+            """
+            SELECT asof, name, codes_json FROM universe_snapshots
+            WHERE name=? ORDER BY asof DESC LIMIT ?
+            """,
+            (name, limit),
+        )
+        return [
+            {"asof": r["asof"], "name": r["name"], "count": len(json.loads(r["codes_json"]))}
+            for r in cur.fetchall()
+        ]
+
+
+_STORE: ResearchStore | None = None
+
+
+def get_store() -> ResearchStore:
+    global _STORE
+    if _STORE is None:
+        _STORE = ResearchStore()
+    return _STORE

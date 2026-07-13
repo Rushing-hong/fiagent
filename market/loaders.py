@@ -127,3 +127,90 @@ def fetch_akshare(code: str, start_date: str, end_date: str) -> list[dict[str, A
     except (ValueError, TypeError, KeyError, ConnectionError, OSError) as exc:
         logger.warning("akshare failed for %s: %s", code, exc)
         return []
+
+
+def fetch_akshare_minute(
+    code: str,
+    *,
+    period: str = "5",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    use_cache: bool = True,
+) -> list[dict[str, Any]]:
+    """Recent minute bars via akshare; merges/persists to local research.db."""
+    period = str(period)
+    if period not in ("1", "5", "15", "30", "60"):
+        period = "5"
+
+    cached: list[dict[str, Any]] = []
+    if use_cache:
+        try:
+            from market.research_store import get_store
+            cached = get_store().load_bars(code, period, start_date, end_date)
+        except Exception as exc:
+            logger.warning("bar cache load failed: %s", exc)
+
+    try:
+        import akshare as ak
+    except ImportError:
+        return cached
+
+    bare = code.split(".")[0]
+    suffix = code.split(".")[-1].upper() if "." in code else (
+        "SH" if bare.startswith(("5", "6", "9")) else "SZ"
+    )
+    symbol = f"{suffix.lower()}{bare}"
+    try:
+        df = ak.stock_zh_a_minute(symbol=symbol, period=period, adjust="qfq")
+        if df is None or df.empty:
+            return cached
+        day_col = "day" if "day" in df.columns else df.columns[0]
+        fresh: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            td = str(row[day_col])
+            if start_date and td[:10] < start_date[:10]:
+                continue
+            if end_date and td[:10] > end_date[:10]:
+                continue
+            fresh.append({
+                "trade_date": td,
+                "open": float(row.get("open", 0) or 0),
+                "high": float(row.get("high", 0) or 0),
+                "low": float(row.get("low", 0) or 0),
+                "close": float(row.get("close", 0) or 0),
+                "volume": float(row.get("volume", 0) or 0),
+            })
+        if use_cache and fresh:
+            try:
+                from market.research_store import get_store
+                # store full fresh pull (unfiltered by start) for accumulation
+                all_rows = []
+                for _, row in df.iterrows():
+                    all_rows.append({
+                        "trade_date": str(row[day_col]),
+                        "open": float(row.get("open", 0) or 0),
+                        "high": float(row.get("high", 0) or 0),
+                        "low": float(row.get("low", 0) or 0),
+                        "close": float(row.get("close", 0) or 0),
+                        "volume": float(row.get("volume", 0) or 0),
+                    })
+                get_store().upsert_bars(code, period, all_rows)
+            except Exception as exc:
+                logger.warning("bar cache save failed: %s", exc)
+        if not fresh and cached:
+            return cached
+        if not cached:
+            return fresh
+        # merge by trade_date
+        by_td = {r["trade_date"]: r for r in cached}
+        for r in fresh:
+            by_td[r["trade_date"]] = r
+        merged = [by_td[k] for k in sorted(by_td.keys())]
+        if start_date:
+            merged = [r for r in merged if r["trade_date"][:10] >= start_date[:10]]
+        if end_date:
+            merged = [r for r in merged if r["trade_date"][:10] <= end_date[:10]]
+        return merged
+    except (ValueError, TypeError, KeyError, ConnectionError, OSError) as exc:
+        logger.warning("akshare minute failed for %s: %s", code, exc)
+        return cached

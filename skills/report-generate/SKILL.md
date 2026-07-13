@@ -17,6 +17,8 @@ Generate structured, professional-grade financial research reports. Follow the c
 | Type | Length | Core Content | Trigger Scenario |
 |------|------|---------|---------|
 | Deep-dive stock report | 3000-5000 words | Company analysis + valuation + rating | "Analyze stock XX" |
+
+> Deep-dive 报告的财务分析章节应调用 **`calc_dupont`** 与 **`check_red_flags`** 的输出填充，勿手算杜邦/红旗。
 | Industry research | 2000-4000 words | Industry structure + trend + recommended names | "How is sector XX?" |
 | Strategy report | 1500-3000 words | Macro + strategy + allocation recommendation | "What is the market outlook?" |
 | Backtest report | 1000-2000 words | Strategy performance + risk + improvement suggestions | After a backtest is completed |

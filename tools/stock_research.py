@@ -14,6 +14,7 @@ from market.eastmoney import (
     resolve_secid,
     validate_a_share,
 )
+from market.eastmoney_indicator_fields import attach_normalized
 from market.envelope import clamp_int, err, ok, to_float
 from market.http import resolve_min_interval, throttled_get
 from tools.base import BaseTool
@@ -40,12 +41,18 @@ class ResearchReportsTool(BaseTool):
     summary = "卖方研报 + 一致预期 EPS"
     description = (
         "获取 A 股研报列表（东财 reportapi）及同花顺一致预期 EPS（THS，best-effort）。"
+        "研报含分年度 EPS/PE 预测；需 begin/end 时间窗（默认近 365 天）。"
     )
     parameters = {
         "type": "object",
         "properties": {
             "code": {"type": "string"},
             "limit": {"type": "integer", "default": 20},
+            "days": {
+                "type": "integer",
+                "default": 365,
+                "description": "研报回溯日历日（东财要求 beginTime）",
+            },
         },
         "required": ["code"],
     }
@@ -56,20 +63,18 @@ class ResearchReportsTool(BaseTool):
         if code is None:
             return err("需要有效的 A 股代码 .SH/.SZ/.BJ")
         limit = clamp_int(args.get("limit"), 20, 1, 50)
+        days = clamp_int(args.get("days"), 365, 30, 1095)
         try:
-            payload = get_json(
-                _REPORT_LIST_URL,
-                params={
-                    "code": bare_a_share_code(code),
-                    "qType": "0",
-                    "pageSize": str(limit),
-                    "pageNo": "1",
-                },
-            )
+            reports = _fetch_em_reports(code, limit=limit, days=days)
         except Exception as exc:
             return err(str(exc))
-        reports = _parse_reports(payload)[:limit]
         consensus = _fetch_ths_consensus(code)
+        if consensus:
+            try:
+                from market.research_store import get_store
+                get_store().save_consensus(code, source="ths", points=consensus)
+            except Exception:
+                pass
         if not reports and not consensus:
             return err(f"未找到 {code} 的研报数据")
         return ok(
@@ -122,6 +127,8 @@ class FinancialStatementsTool(BaseTool):
     summary = "财务报表（三大表 + 主要指标）"
     description = (
         "获取 A 股财务报表：balance/income/cashflow/indicators（东财 F10 datacenter）。"
+        "每期附带 normalized 标准字段（revenue/net_income/cfo 等，单位见字段映射），"
+        "杜邦/红旗/DCF 应读 normalized，勿猜东财原始字段名。"
     )
     parameters = {
         "type": "object",
@@ -165,6 +172,7 @@ class FinancialStatementsTool(BaseTool):
         periods = _filter_periods(rows, period)[:40]
         if not periods:
             return err(f"未找到 {code} 的 {statement} 数据")
+        periods = attach_normalized(periods, statement=statement)
         return ok(
             {"code": code, "periods": periods},
             market="a_share",
@@ -172,6 +180,26 @@ class FinancialStatementsTool(BaseTool):
             statement=statement,
             period=period,
         )
+
+
+def _fetch_em_reports(code: str, *, limit: int = 20, days: int = 365) -> list[dict]:
+    from datetime import datetime, timedelta
+
+    end = datetime.now()
+    begin = end - timedelta(days=days)
+    bare = bare_a_share_code(code)
+    payload = get_json(
+        _REPORT_LIST_URL,
+        params={
+            "code": bare,
+            "qType": "0",
+            "pageSize": str(limit),
+            "pageNo": "1",
+            "beginTime": begin.strftime("%Y-%m-%d"),
+            "endTime": end.strftime("%Y-%m-%d"),
+        },
+    )
+    return _parse_reports(payload)[:limit]
 
 
 def _parse_reports(payload: Any) -> list[dict]:
@@ -182,12 +210,30 @@ def _parse_reports(payload: Any) -> list[dict]:
     for row in rows:
         if not isinstance(row, dict):
             continue
+        title = row.get("title")
+        pub = str(row.get("publishDate") or "")[:10]
+        if not title and not pub:
+            continue
         out.append({
-            "title": row.get("title"),
+            "title": title,
             "brokerage": row.get("orgSName") or row.get("orgName"),
             "analyst": row.get("researcher"),
-            "publish_date": str(row.get("publishDate") or "")[:10],
+            "publish_date": pub,
             "rating": row.get("emRatingName") or row.get("sRatingName"),
+            "eps_forecast": {
+                "this_year": to_float(row.get("predictThisYearEps")),
+                "next_year": to_float(row.get("predictNextYearEps")),
+                "next_two_year": to_float(row.get("predictNextTwoYearEps")),
+                "last_year": to_float(row.get("predictLastYearEps")),
+            },
+            "pe_forecast": {
+                "this_year": to_float(row.get("predictThisYearPe")),
+                "next_year": to_float(row.get("predictNextYearPe")),
+            },
+            "actual_eps": {
+                "last_year": to_float(row.get("actualLastYearEps")),
+                "last_two_year": to_float(row.get("actualLastTwoYearEps")),
+            },
         })
     return out
 

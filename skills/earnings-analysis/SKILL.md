@@ -42,6 +42,8 @@ revenue = stores * revenue_per_store
 
 ## 二、SUE / PEAD 超预期交易
 
+> 盈利质量与红旗检查 **优先调用 `check_red_flags`**；杜邦分解 **优先调用 `calc_dupont`**；一致预期修订/简易 SUE **优先调用 `track_consensus`**，不要手算。
+
 **SUE（标准化未预期盈利）**：
 ```
 SUE = (实际EPS - 预期EPS) / std(预期误差)

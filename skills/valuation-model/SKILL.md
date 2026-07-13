@@ -14,6 +14,10 @@ Systematic corporate valuation framework covering absolute valuation (`DCF / DDM
 
 ### 1. DCF (Discounted Cash Flow)
 
+> 生成假设后 **调用 `calc_dcf` 传入全部假设参数**获取 FCFF 表与敏感性矩阵。**不要静默填行业默认 WACC/增长率，不要手算折现。**
+>
+> 可比公司：**优先调用 `screen_peers`** 获取行业估值对比表与 PE/PB/ROE 分位（只给表，贵/便宜由你解读）。
+
 **Core formulas**:
 
 ```
