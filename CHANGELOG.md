@@ -8,6 +8,7 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+- Phase1 Week1 (A-share depth): `docs/PHASE1_ASHARE.md`; exchange trade calendar module + `get_trade_calendar`; `get_macro_data` (PMI/CPI/M2/GDP) with `_meta` unit/frequency; `research.db` schema freeze (macro/factor long-table/micro/artifacts); backtest prefers exchange calendar; prompt defaults to A-share
 - Fix stale clock in long sessions: refresh near-user clock each LLM round; add always-on `get_current_time`
 
 ---

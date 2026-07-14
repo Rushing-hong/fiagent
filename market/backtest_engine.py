@@ -535,7 +535,16 @@ class BacktestEngine:
             for ts in sample
         )
         if self.cfg.skip_halted and not has_intraday:
-            all_dates = list(pd.bdate_range(d_min, d_max))
+            try:
+                from market.trade_calendar import trading_days_index
+                cal = trading_days_index(
+                    d_min.strftime("%Y-%m-%d"),
+                    d_max.strftime("%Y-%m-%d"),
+                )
+                # keep timestamps that fall on exchange sessions; preserve time=00:00
+                all_dates = list(cal) if len(cal) >= 2 else list(pd.bdate_range(d_min, d_max))
+            except Exception:
+                all_dates = list(pd.bdate_range(d_min, d_max))
         else:
             all_dates = sorted(raw_dates)
         if len(all_dates) < 2:

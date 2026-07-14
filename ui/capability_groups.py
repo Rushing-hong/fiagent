@@ -54,7 +54,7 @@ TOOL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
     ),
     (
         "市场情绪",
-        "涨跌停、板块、广度、IPO、分红、利率",
+        "涨跌停、板块、广度、IPO、分红、利率、宏观、交易日历",
         frozenset({
             "get_limit_board",
             "get_sector_info",
@@ -62,6 +62,8 @@ TOOL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
             "get_ipo_calendar",
             "get_dividend_calendar",
             "get_yield_curve",
+            "get_macro_data",
+            "get_trade_calendar",
         }),
     ),
     (

@@ -7,6 +7,7 @@
 | [../CHANGELOG.md](../CHANGELOG.md) | 版本发布历史（Keep a Changelog） |
 | [CHANGELOG-2026-07.md](CHANGELOG-2026-07.md) | 2026.07 早期工具批次明细 |
 | [FINANCIAL_MODULES_PLAN.md](FINANCIAL_MODULES_PLAN.md) | 财务计算模块计划与验收 |
+| [PHASE1_ASHARE.md](PHASE1_ASHARE.md) | Phase1 A股深度计划（周闭环/schema/验收） |
 | [BACKTEST_ROADMAP.md](BACKTEST_ROADMAP.md) | A 股回测增强路线图（P0–P5） |
 | [architecture.md](architecture.md) | 运行时架构、数据流、扩展点 |
 | [references.md](references.md) | Vibe-Trading / OpenCode 参考对照 |

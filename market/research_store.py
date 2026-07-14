@@ -70,9 +70,158 @@ class ResearchStore:
                 meta_json TEXT,
                 PRIMARY KEY (asof, name)
             );
+
+            CREATE TABLE IF NOT EXISTS trade_calendar (
+                trade_date TEXT PRIMARY KEY,
+                is_open INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS macro_series (
+                indicator TEXT NOT NULL,
+                asof TEXT NOT NULL,
+                value REAL,
+                unit TEXT,
+                frequency TEXT,
+                source TEXT,
+                fetch_time TEXT,
+                PRIMARY KEY (indicator, asof, source)
+            );
+            CREATE INDEX IF NOT EXISTS idx_macro_ind
+                ON macro_series(indicator, asof);
+
+            CREATE TABLE IF NOT EXISTS factor_values (
+                asof TEXT NOT NULL,
+                code TEXT NOT NULL,
+                factor_id TEXT NOT NULL,
+                value REAL,
+                purpose TEXT NOT NULL,
+                PRIMARY KEY (asof, code, factor_id, purpose)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fv_factor_asof
+                ON factor_values(factor_id, asof);
+            CREATE INDEX IF NOT EXISTS idx_fv_code_asof
+                ON factor_values(code, asof);
+            CREATE INDEX IF NOT EXISTS idx_fv_purpose
+                ON factor_values(purpose, asof, factor_id);
+
+            CREATE TABLE IF NOT EXISTS micro_signals (
+                asof TEXT NOT NULL,
+                code TEXT NOT NULL,
+                signal_id TEXT NOT NULL,
+                value REAL,
+                unit TEXT,
+                meta_json TEXT,
+                PRIMARY KEY (asof, code, signal_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS run_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT,
+                created_at TEXT,
+                payload_json TEXT
+            );
             """
         )
         conn.commit()
+
+    # --- trade calendar ---
+    def replace_trade_calendar(self, days: list[str]) -> int:
+        conn = self._conn()
+        conn.execute("DELETE FROM trade_calendar")
+        conn.executemany(
+            "INSERT INTO trade_calendar(trade_date, is_open) VALUES(?,1)",
+            [(d,) for d in days],
+        )
+        conn.commit()
+        return len(days)
+
+    def count_trade_days(self) -> int:
+        cur = self._conn().execute("SELECT COUNT(*) FROM trade_calendar")
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def load_trade_days(self, start: str | None = None, end: str | None = None) -> list[str]:
+        q = "SELECT trade_date FROM trade_calendar WHERE is_open=1"
+        args: list[Any] = []
+        if start:
+            q += " AND trade_date >= ?"
+            args.append(start[:10])
+        if end:
+            q += " AND trade_date <= ?"
+            args.append(end[:10])
+        q += " ORDER BY trade_date"
+        return [r[0] for r in self._conn().execute(q, args).fetchall()]
+
+    # --- macro ---
+    def upsert_macro_points(self, rows: list[dict[str, Any]]) -> int:
+        if not rows:
+            return 0
+        conn = self._conn()
+        payload = []
+        for r in rows:
+            payload.append((
+                str(r["indicator"]),
+                str(r["asof"])[:10],
+                float(r["value"]) if r.get("value") is not None else None,
+                r.get("unit"),
+                r.get("frequency"),
+                r.get("source") or "akshare",
+                r.get("fetch_time") or _now(),
+            ))
+        conn.executemany(
+            """
+            INSERT INTO macro_series(indicator, asof, value, unit, frequency, source, fetch_time)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(indicator, asof, source) DO UPDATE SET
+              value=excluded.value, unit=excluded.unit, frequency=excluded.frequency,
+              fetch_time=excluded.fetch_time
+            """,
+            payload,
+        )
+        conn.commit()
+        return len(payload)
+
+    def load_macro(
+        self,
+        indicator: str,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        q = "SELECT indicator, asof, value, unit, frequency, source, fetch_time FROM macro_series WHERE indicator=?"
+        args: list[Any] = [indicator]
+        if start:
+            q += " AND asof >= ?"
+            args.append(start[:10])
+        if end:
+            q += " AND asof <= ?"
+            args.append(end[:10])
+        q += " ORDER BY asof"
+        return [dict(r) for r in self._conn().execute(q, args).fetchall()]
+
+    # --- factors (bulk) ---
+    def upsert_factor_values(self, rows: list[tuple[str, str, str, float, str]]) -> int:
+        """rows: (asof, code, factor_id, value, purpose)."""
+        if not rows:
+            return 0
+        conn = self._conn()
+        conn.executemany(
+            """
+            INSERT INTO factor_values(asof, code, factor_id, value, purpose)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(asof, code, factor_id, purpose) DO UPDATE SET value=excluded.value
+            """,
+            rows,
+        )
+        conn.commit()
+        return len(rows)
+
+    def prune_factor_values(self, keep_from: str) -> int:
+        cur = self._conn().execute(
+            "DELETE FROM factor_values WHERE asof < ?", (keep_from[:10],)
+        )
+        self._conn().commit()
+        return int(cur.rowcount or 0)
 
     def upsert_bars(
         self,
