@@ -11,6 +11,8 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
 
 from core.context import AgentContext
+from core.context_budget import estimate_context_usage
+from core.message_sanitize import sanitize_messages_for_api
 from core.stream import stream_chat_completion
 from core.turn_control import TurnAborted, turn_control
 from hooks.registry import HookRegistry
@@ -28,11 +30,23 @@ _REPEAT_WARNING = (
 
 
 def assistant_message(msg: Any) -> dict[str, Any]:
-    payload = {"role": "assistant", "content": msg.content}
+    content = msg.content
+    tool_calls = msg.tool_calls
     reasoning = getattr(msg, "reasoning_content", None)
+
+    # 无 tool_calls 时 content 不能为空（DeepSeek 400）
+    if not tool_calls:
+        text = (content or "").strip()
+        if not text and isinstance(reasoning, str) and reasoning.strip():
+            text = reasoning.strip()
+        if not text:
+            text = "…"  # 极端兜底，避免写入非法 assistant
+        content = text
+
+    payload: dict[str, Any] = {"role": "assistant", "content": content}
     if reasoning:
         payload["reasoning_content"] = reasoning
-    if msg.tool_calls:
+    if tool_calls:
         payload["tool_calls"] = [
             {
                 "id": tc.id,
@@ -42,9 +56,28 @@ def assistant_message(msg: Any) -> dict[str, Any]:
                     "arguments": tc.function.arguments,
                 },
             }
-            for tc in msg.tool_calls
+            for tc in tool_calls
         ]
+        if not (isinstance(content, str) and content.strip()):
+            payload["content"] = None
     return payload
+
+
+def _promote_empty_reply(msg: Any) -> Any:
+    """Thinking 模型有时只填 reasoning、正文为空：收尾时提升为正式回复。"""
+    if msg.tool_calls:
+        return msg
+    content = (msg.content or "").strip()
+    reasoning = (getattr(msg, "reasoning_content", None) or "").strip()
+    if content or not reasoning:
+        return msg
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        content=reasoning,
+        reasoning_content=reasoning,
+        tool_calls=None,
+    )
 
 
 def run_tool_with_hooks(
@@ -155,6 +188,12 @@ def run_agent_turn(
 
             req_messages = llm_before.get("messages", messages)
             req_tools = llm_before.get("tools", tools)
+            req_messages = sanitize_messages_for_api(req_messages)
+            # 近端注入实时时钟（不写回 session），避免长对话忽略 system 顶部时间
+            req_messages = ctx.with_clock_for_api(req_messages)
+
+            usage = estimate_context_usage(req_messages, req_tools)
+            ui.show_context_progress(usage)
 
             msg = stream_chat_completion(
                 client,
@@ -162,6 +201,7 @@ def run_agent_turn(
                 tools=req_tools,
                 round_idx=round_idx + 1,
             )
+            msg = _promote_empty_reply(msg)
 
             turn_control.checkpoint(f"第 {round_idx + 1} 轮推理后")
             hooks.emit("llm.after", {"message": msg, "round_idx": round_idx + 1})

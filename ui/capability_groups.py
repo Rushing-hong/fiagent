@@ -96,6 +96,7 @@ TOOL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
         frozenset({
             "web_search",
             "read_url",
+            "get_current_time",
         }),
     ),
 ]

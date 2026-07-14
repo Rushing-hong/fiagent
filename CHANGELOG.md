@@ -8,7 +8,7 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
--
+- Fix stale clock in long sessions: refresh near-user clock each LLM round; add always-on `get_current_time`
 
 ---
 
