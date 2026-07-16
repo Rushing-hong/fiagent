@@ -172,6 +172,7 @@ class Trade:
     quantity: int
     pnl: float | None = None
     pnl_pct: float | None = None
+    exit_reason: str | None = None
 
 
 def _is_limit_up(bar: dict[str, float], code: str) -> bool:
@@ -329,6 +330,7 @@ class Broker:
                     t = self.open_trades.pop(code)
                     t.exit_date = date
                     t.exit_price = trade_price
+                    t.exit_reason = order.reason if getattr(order, "reason", None) else "signal_exit"
                     cost = t.entry_price * t.quantity
                     t.pnl = (trade_price - t.entry_price) * t.quantity - fee
                     t.pnl_pct = t.pnl / cost if cost else 0
@@ -759,8 +761,8 @@ class BacktestEngine:
             )
 
         metrics = compute_metrics(equity_df, broker.trades, self.cfg)
-        from market.backtest_attr import thin_layer1_attribution
-        metrics["layer1_attribution"] = thin_layer1_attribution(broker.trades)
+        from market.backtest_attr import thick_layer1_attribution
+        metrics["layer1_attribution"] = thick_layer1_attribution(broker.trades)
         metrics["fill_stats"] = fill_stats
         metrics["rejects"] = len(broker.reject_log)
         metrics["reject_sample"] = broker.reject_log[:20]
@@ -789,6 +791,7 @@ class BacktestEngine:
                 "quantity": t.quantity,
                 "pnl": round(t.pnl, 2) if t.pnl else None,
                 "pnl_pct": round(t.pnl_pct * 100, 2) if t.pnl_pct else None,
+                "exit_reason": t.exit_reason,
             })
 
         hedge_curve = []

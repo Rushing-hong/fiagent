@@ -44,6 +44,10 @@ TOOL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
         "交易异动",
         "龙虎榜、两融、大宗、股东、解禁、增减持",
         frozenset({
+            "analyze_dragon_tiger",
+            "northbound_signal",
+            "calc_var",
+            "run_stress_test",
             "get_dragon_tiger",
             "get_margin_trading",
             "get_block_trades",

@@ -223,6 +223,36 @@ class ResearchStore:
         self._conn().commit()
         return int(cur.rowcount or 0)
 
+    def upsert_micro_signals(self, rows: list[dict[str, Any]]) -> int:
+        """rows: asof, code, signal_id, value, unit?, meta_json?"""
+        if not rows:
+            return 0
+        conn = self._conn()
+        payload = []
+        for r in rows:
+            meta = r.get("meta_json")
+            if isinstance(meta, dict):
+                meta = json.dumps(meta, ensure_ascii=False)
+            payload.append((
+                str(r["asof"])[:10],
+                str(r["code"]),
+                str(r["signal_id"]),
+                float(r["value"]) if r.get("value") is not None else None,
+                r.get("unit"),
+                meta,
+            ))
+        conn.executemany(
+            """
+            INSERT INTO micro_signals(asof, code, signal_id, value, unit, meta_json)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(asof, code, signal_id) DO UPDATE SET
+              value=excluded.value, unit=excluded.unit, meta_json=excluded.meta_json
+            """,
+            payload,
+        )
+        conn.commit()
+        return len(payload)
+
     def upsert_bars(
         self,
         code: str,

@@ -204,7 +204,7 @@ L1 工具链除不崩溃外必须：
 - [x] `prompts/base.md` A 股默认语境  
 - [x] 单测：日历、宏观信封、schema  
 
-## 7b. Week2 DoD（进行中/已完成）
+## 7b. Week2 DoD（已完成）
 
 - [x] `universe_asof` 接入 `run_backtest` / `build_factor_panel`  
 - [x] `market/factor_zoo.py`：`alpha_*` / `risk_*` 命名空间（价量 v0）  
@@ -213,7 +213,15 @@ L1 工具链除不崩溃外必须：
 - [x] 薄 Layer1：`metrics.layer1_attribution`（Top5 赢家/输家 + total_pnl）  
 - [x] 单测 `tests/test_phase1_week2.py`  
 
-> 周末演示：`build_factor_panel` → Top 打分 + IC；`run_backtest` 看 layer1。
+## 7c. Week3 DoD（已完成）
+
+- [x] `analyze_dragon_tiger`：席位启发式分类 + micro_signals  
+- [x] `northbound_signal`：分位/连续净流入（CNY_wan）  
+- [x] `calc_var` / `run_stress_test`（2015/2018/2020/2022 情景）  
+- [x] Layer1 加厚：出场原因、持仓区间、剔 Top5  
+- [x] 单测 `tests/test_phase1_week3.py`  
+
+> 周末演示：宏观+因子+龙虎榜/北向 → 综合信号；回测看加厚 Layer1。
 ---
 
 ## 8. 风险登记（摘要）
