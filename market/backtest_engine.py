@@ -759,6 +759,8 @@ class BacktestEngine:
             )
 
         metrics = compute_metrics(equity_df, broker.trades, self.cfg)
+        from market.backtest_attr import thin_layer1_attribution
+        metrics["layer1_attribution"] = thin_layer1_attribution(broker.trades)
         metrics["fill_stats"] = fill_stats
         metrics["rejects"] = len(broker.reject_log)
         metrics["reject_sample"] = broker.reject_log[:20]

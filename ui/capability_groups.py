@@ -87,6 +87,7 @@ TOOL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
             "suggest_hedge_ratio",
             "analyze_portfolio_risk",
             "load_pit_universe",
+            "build_factor_panel",
             "factor_analysis",
             "analyze_trade_journal",
             "iwencai_search",

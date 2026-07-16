@@ -67,8 +67,14 @@ class RunBacktestTool(BaseTool):
             "codes": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "股票代码列表，如 ['600519.SH']",
+                "description": "股票代码列表，如 ['600519.SH']；可与 universe_asof 二选一",
             },
+            "universe_asof": {
+                "type": "string",
+                "description": "从 research.db 点位池加载 codes（需先 build_tradable_universe 存快照）",
+            },
+            "universe_name": {"type": "string", "default": "default"},
+            "max_universe": {"type": "integer", "default": 50, "description": "点位池截断上限"},
             "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
             "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
             "strategy": {
@@ -193,7 +199,7 @@ class RunBacktestTool(BaseTool):
                 "description": "K线周期：1d=日线；1/5/15/30/60=分钟（akshare 近端，历史较短）",
             },
         },
-        "required": ["codes", "start_date", "end_date"],
+        "required": ["start_date", "end_date"],
     }
     is_readonly = True
     repeatable = True
@@ -201,7 +207,22 @@ class RunBacktestTool(BaseTool):
     def execute(self, args: dict[str, Any], ctx: Any) -> str:
         codes = args.get("codes")
         if not isinstance(codes, list) or not codes:
-            return _err("codes 必须为非空数组")
+            asof = str(args.get("universe_asof") or "").strip()
+            if not asof:
+                return _err("需要 codes 或 universe_asof")
+            try:
+                from market.research_store import get_store
+                pit = get_store().load_universe_pit(
+                    asof, name=str(args.get("universe_name") or "default")
+                )
+            except Exception as e:
+                return _err(f"加载点位池失败: {e}")
+            if pit is None or not pit.get("codes"):
+                return _err(
+                    f"无 universe 快照 asof<={asof}；请先 build_tradable_universe(save_snapshot=true)"
+                )
+            max_u = int(args.get("max_universe") or 50)
+            codes = list(pit["codes"])[:max_u]
 
         start_date = str(args.get("start_date", ""))
         end_date = str(args.get("end_date", ""))

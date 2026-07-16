@@ -1,4 +1,4 @@
-"""Barra-lite 多因子风险：mom / size / vol (+可选行业哑变量)。
+"""Barra-lite 多因子风险：CNE5 风格近似 risk_*（价量）。
 
 输出因子协方差、特异波动、组合风险分解。非商业 Barra/CNE 模型。
 """
@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from market.backtest_p2 import momentum_factor, size_factor, vol_factor
+from market.factor_zoo import RISK_FACTOR_IDS, compute_day_zscores, equal_weight_market_returns
 
 
 def _aligned_returns(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -32,20 +32,22 @@ def build_factor_exposures(
     *,
     window: int = 20,
     industry_map: dict[str, str] | None = None,
+    factor_ids: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Rows=codes, cols=factors. Industry one-hots if map provided (drop first)."""
-    mom = momentum_factor(data, date, codes, window=window)
-    sz = size_factor(data, date, codes, window=window)
-    vo = vol_factor(data, date, codes, window=window)
-    frame = pd.DataFrame({
-        "mom": [mom.get(c, 0.0) for c in codes],
-        "size": [sz.get(c, 0.0) for c in codes],
-        "vol": [vo.get(c, 0.0) for c in codes],
-    }, index=codes)
+    """Rows=codes, cols=risk_* (+ optional industry dummies)."""
+    fids = list(factor_ids or RISK_FACTOR_IDS)
+    mkt = equal_weight_market_returns(data)
+    zs = compute_day_zscores(data, date, codes, fids, market_rets=mkt)
+    frame = pd.DataFrame(
+        {fid: [zs[fid].get(c, 0.0) for c in codes] for fid in fids},
+        index=codes,
+    )
     if industry_map:
         inds = sorted({industry_map.get(c, "OTHER") for c in codes})
-        for ind in inds[1:]:  # drop first to avoid dummy trap
-            frame[f"ind_{ind}"] = [1.0 if industry_map.get(c, "OTHER") == ind else 0.0 for c in codes]
+        for ind in inds[1:]:
+            frame[f"ind_{ind}"] = [
+                1.0 if industry_map.get(c, "OTHER") == ind else 0.0 for c in codes
+            ]
     return frame.fillna(0.0)
 
 
@@ -55,6 +57,7 @@ def estimate_factor_model(
     window: int = 20,
     lookback: int = 60,
     industry_map: dict[str, str] | None = None,
+    factor_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Cross-sectional OLS each day: r = X f + e
@@ -65,6 +68,12 @@ def estimate_factor_model(
     if rets.empty or len(rets) < max(window + 5, 20):
         raise ValueError("行情不足，无法估计风险模型")
 
+    fids = list(factor_ids or RISK_FACTOR_IDS)
+    # need n_obs > n_factors for stable cross-section
+    max_f = max(3, len(codes) - 2)
+    if len(fids) > max_f:
+        fids = fids[:max_f]
+
     dates = list(rets.index)
     use_dates = dates[-(lookback + 1) :]
     factor_rets: list[np.ndarray] = []
@@ -73,20 +82,18 @@ def estimate_factor_model(
 
     for i in range(1, len(use_dates)):
         d0, d1 = use_dates[i - 1], use_dates[i]
-        # exposures as of prior close
         try:
             X = build_factor_exposures(
-                data, d0, codes, window=window, industry_map=industry_map
+                data, d0, codes, window=window, industry_map=industry_map, factor_ids=fids
             )
         except Exception:
             continue
         y = rets.loc[d1].reindex(codes).astype(float)
         mask = y.notna()
-        if mask.sum() < max(4, X.shape[1] + 1):
+        if int(mask.sum()) < max(4, X.shape[1] + 1):
             continue
         Xm = X.loc[mask].values
         ym = y.loc[mask].values
-        # ridge OLS
         k = Xm.shape[1]
         beta, *_ = np.linalg.lstsq(
             Xm.T @ Xm + np.eye(k) * 1e-6, Xm.T @ ym, rcond=None
@@ -113,10 +120,9 @@ def estimate_factor_model(
         else:
             specific_var[c] = float(np.nanmean(list(specific_var.values())) if specific_var else 1e-4)
 
-    # latest exposures
     last = use_dates[-1]
     X_last = build_factor_exposures(
-        data, last, codes, window=window, industry_map=industry_map
+        data, last, codes, window=window, industry_map=industry_map, factor_ids=fids
     )
 
     return {

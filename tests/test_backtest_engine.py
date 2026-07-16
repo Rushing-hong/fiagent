@@ -311,17 +311,19 @@ def test_research_store_and_barra_and_intraday_dates(tmp_path):
     idx = pd.bdate_range("2024-01-02", periods=80)
     data = {}
     rng = np.random.default_rng(0)
-    for i, code in enumerate(["A", "B", "C", "D"]):
+    for i, code in enumerate([f"S{j}" for j in range(10)]):
         px = 10 * np.cumprod(1 + rng.normal(0.001, 0.02, len(idx)))
         data[code] = pd.DataFrame({
             "open": px, "high": px * 1.01, "low": px * 0.99, "close": px,
             "volume": rng.integers(1e5, 1e6, len(idx)),
         }, index=idx)
     model = estimate_factor_model(data, window=10, lookback=40)
-    risk = portfolio_risk({"A": 0.25, "B": 0.25, "C": 0.25, "D": 0.25}, model)
+    w = {c: 0.1 for c in data}
+    risk = portfolio_risk(w, model)
     assert risk["risk"]["total_vol"] >= 0
-    assert "mom" in risk["factor_exposure"]
-
+    assert "risk_mom" in risk["factor_exposure"] or any(
+        k.startswith("risk_") for k in risk["factor_exposure"]
+    )
     # intraday dates preserved
     midx = pd.date_range("2024-06-03 09:35", periods=30, freq="5min")
     mdf = pd.DataFrame({

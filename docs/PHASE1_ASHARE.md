@@ -194,7 +194,7 @@ L1 工具链除不崩溃外必须：
 
 ---
 
-## 7. Week1 DoD（本文件对应实现）
+## 7. Week1 DoD（已完成）
 
 - [x] 本文档合入  
 - [x] `market/trade_calendar.py` + `get_trade_calendar`；回测日轴优先交易所日历  
@@ -204,7 +204,16 @@ L1 工具链除不崩溃外必须：
 - [x] `prompts/base.md` A 股默认语境  
 - [x] 单测：日历、宏观信封、schema  
 
-> Week1 周末演示闭环「宏观→研判」依赖 Agent 运行时；工具侧已就绪。
+## 7b. Week2 DoD（进行中/已完成）
+
+- [x] `universe_asof` 接入 `run_backtest` / `build_factor_panel`  
+- [x] `market/factor_zoo.py`：`alpha_*` / `risk_*` 命名空间（价量 v0）  
+- [x] `build_factor_panel`：截面计算 + bulk 写 `factor_values` + IC/符号 note  
+- [x] Barra-lite 扩至多个 `risk_*`（股票数不足时自动缩维）  
+- [x] 薄 Layer1：`metrics.layer1_attribution`（Top5 赢家/输家 + total_pnl）  
+- [x] 单测 `tests/test_phase1_week2.py`  
+
+> 周末演示：`build_factor_panel` → Top 打分 + IC；`run_backtest` 看 layer1。
 ---
 
 ## 8. 风险登记（摘要）
