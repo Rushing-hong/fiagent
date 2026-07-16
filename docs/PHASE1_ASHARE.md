@@ -2,7 +2,7 @@
 
 > Owner：实现方（本仓库 Agent/开发者）  
 > Reviewer：仓库维护者（schema/验收冻结点）  
-> 状态：Week1 进行中（2026-07-14）  
+> 状态：Week4 已完成（2026-07-16）  
 > 目标：不做 Vibe-Trading 广度；做 **可信的中国 A 股投研深度**。
 
 相关讨论结论已吸收：依赖序、周闭环、长表因子面板、unit/frequency meta、归因按周拆分、L0/L1/L2 验收。
@@ -222,6 +222,17 @@ L1 工具链除不崩溃外必须：
 - [x] 单测 `tests/test_phase1_week3.py`  
 
 > 周末演示：宏观+因子+龙虎榜/北向 → 综合信号；回测看加厚 Layer1。
+
+## 7d. Week4 DoD（已完成）
+
+- [x] Layer2：`metrics.layer2_attribution`（β_HS300 + β_ZZ500 + t_beta / α）
+- [x] `run_backtest` 默认拉取 `000300.SH` / `000905.SH` 作基准收益
+- [x] risk 暴露归因：`metrics.risk_attribution`（Barra `risk_*` × 期末权重）
+- [x] L1 Scenario：`envelope.assert_*` 对 unit/frequency 不匹配 **fail**（非仅崩溃）
+- [x] 单测 `tests/test_phase1_week4.py`
+
+> 周末演示：全链路回测可读 Layer1/Layer2/risk；工具链 meta 断言防静默错配。
+
 ---
 
 ## 8. 风险登记（摘要）
@@ -242,4 +253,5 @@ L1 工具链除不崩溃外必须：
 
 | 日期 | 说明 |
 |------|------|
+| 2026-07-16 | Week4 完成：Layer2 β + risk 暴露归因 + L1 unit/frequency Scenario；Phase1 四周闭环 |
 | 2026-07-14 | 初版冻结：周计划、长表 schema、验收与验证分层 |

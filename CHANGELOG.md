@@ -8,6 +8,7 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+- Phase1 Week4: Layer2 β (HS300+ZZ500+t) on backtest metrics; risk exposure attribution via Barra risk_*; L1 `assert_unit/frequency` chain guards; `tests/test_phase1_week4.py`
 - Phase1 Week3: dragon-tiger seat heuristic (`analyze_dragon_tiger`), `northbound_signal`, `calc_var`/`run_stress_test` A-share scenarios, thick Layer1 attribution
 - Phase1 Week2: `build_factor_panel` (alpha_*/risk_* zoo, IC notes, research.db bulk); universe_asof on backtest; Barra risk_* expansion; thin Layer1 attribution on run_backtest metrics
 - Phase1 Week1 (A-share depth): `docs/PHASE1_ASHARE.md`; exchange trade calendar module + `get_trade_calendar`; `get_macro_data` (PMI/CPI/M2/GDP) with `_meta` unit/frequency; `research.db` schema freeze (macro/factor long-table/micro/artifacts); backtest prefers exchange calendar; prompt defaults to A-share

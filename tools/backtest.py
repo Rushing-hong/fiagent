@@ -263,6 +263,21 @@ class RunBacktestTool(BaseTool):
         if not data:
             return _err("未获取到任何行情数据")
 
+        # Week4 Layer2：默认拉沪深300 / 中证500 日收益作 β 基准
+        benchmark_returns: dict[str, Any] = {}
+        if interval == "1d":
+            for bm_name, bm_code in (("HS300", "000300.SH"), ("ZZ500", "000905.SH")):
+                try:
+                    rows, _ = fetch_one(bm_code, start_date, end_date)
+                    if not rows:
+                        continue
+                    bdf = pd.DataFrame(rows)
+                    bdf["trade_date"] = pd.to_datetime(bdf["trade_date"])
+                    closes = bdf.set_index("trade_date")["close"].astype(float).sort_index()
+                    benchmark_returns[bm_name] = closes.pct_change().dropna()
+                except Exception:
+                    continue
+
         # Minute: T+1 lock + overnight cash interest are ill-defined per bar
         if interval != "1d":
             args = dict(args)
@@ -365,6 +380,7 @@ class RunBacktestTool(BaseTool):
                 sleeves=sleeves,
                 sleeve_weights=sleeve_weights,
                 industry_map=industry_map,
+                benchmark_returns=benchmark_returns or None,
             )
         except Exception as e:
             return _err(f"回测执行失败: {e}")

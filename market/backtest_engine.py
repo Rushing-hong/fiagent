@@ -522,6 +522,9 @@ class BacktestEngine:
         sleeves: dict[str, pd.DataFrame] | None = None,
         sleeve_weights: dict[str, float] | None = None,
         industry_map: dict[str, str] | None = None,
+        benchmark_returns: dict[str, pd.Series] | None = None,
+        layer2: bool = True,
+        risk_attr: bool = True,
     ) -> dict[str, Any]:
         codes = list(data.keys())
         if not codes:
@@ -761,8 +764,45 @@ class BacktestEngine:
             )
 
         metrics = compute_metrics(equity_df, broker.trades, self.cfg)
-        from market.backtest_attr import thick_layer1_attribution
+        from market.backtest_attr import (
+            layer2_beta_attribution,
+            risk_exposure_snapshot,
+            thick_layer1_attribution,
+        )
         metrics["layer1_attribution"] = thick_layer1_attribution(broker.trades)
+
+        # Layer2: β vs HS300 / ZZ500 (or caller-supplied benchmarks)
+        if layer2 and not equity_df.empty and "equity" in equity_df.columns:
+            eq_idx = equity_df.copy()
+            eq_idx["date"] = pd.to_datetime(eq_idx["date"])
+            strat_rets = eq_idx.set_index("date")["equity"].pct_change().dropna()
+            bm = dict(benchmark_returns or {})
+            if bm:
+                metrics["layer2_attribution"] = layer2_beta_attribution(strat_rets, bm)
+            else:
+                metrics["layer2_attribution"] = {
+                    "layer": "2_beta",
+                    "benchmarks": {},
+                    "note": "未提供基准收益序列；run_backtest 默认拉 HS300/ZZ500",
+                }
+
+        # Risk exposure: end-of-period weights × Barra risk_*
+        if risk_attr and broker.positions:
+            eq_val = float(broker.current_equity(prices)) if prices else 0.0
+            wts: dict[str, float] = {}
+            if eq_val > 0:
+                for c, qty in broker.positions.items():
+                    px = float(prices.get(c, 0.0) or 0.0)
+                    if qty and px > 0:
+                        wts[c] = float(qty) * px / eq_val
+            if wts:
+                metrics["risk_attribution"] = risk_exposure_snapshot(data, wts)
+            else:
+                metrics["risk_attribution"] = {
+                    "purpose": "risk",
+                    "note": "期末无有效持仓权重",
+                }
+
         metrics["fill_stats"] = fill_stats
         metrics["rejects"] = len(broker.reject_log)
         metrics["reject_sample"] = broker.reject_log[:20]
