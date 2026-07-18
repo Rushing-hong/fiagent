@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import logging
-import re
 from typing import Any
 
 from market.http import resolve_min_interval, throttled_get_json
-
-logger = logging.getLogger(__name__)
 
 _KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 _SEARCH_URL = "https://searchapi.eastmoney.com/api/suggest/get"
@@ -35,12 +30,6 @@ KLT_BY_INTERVAL: dict[str, int] = {
 _FIELDS1 = "f1,f2,f3,f4,f5,f6"
 _FIELDS2 = "f51,f52,f53,f54,f55,f56,f57"
 
-_US_SECID_CACHE: dict[str, str | None] = {}
-_JSONP_WRAPPER = re.compile(
-    r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\((.*)\)\s*;?\s*$",
-    re.DOTALL,
-)
-
 A_SHARE_SUFFIXES = ("SH", "SZ", "BJ")
 
 
@@ -48,10 +37,15 @@ def validate_a_share(code: str) -> str | None:
     """Validate and normalize an A-share code. Returns upper-cased code or None."""
     if not code or not code.strip():
         return None
-    code = code.strip().upper()
-    if code.rpartition(".")[2] not in A_SHARE_SUFFIXES:
+    from market.a_share_code import to_a_share_symbol
+
+    normalized = to_a_share_symbol(code.strip())
+    bare, _, suffix = normalized.rpartition(".")
+    if suffix not in A_SHARE_SUFFIXES:
         return None
-    return code
+    if not (len(bare) == 6 and bare.isdigit()):
+        return None
+    return normalized
 
 
 def _min_interval() -> float:
@@ -112,74 +106,13 @@ def _resolve_a_share_secid(code: str, suffix: str) -> str | None:
     return None
 
 
-def _strip_jsonp(text: str) -> Any:
-    stripped = text.strip()
-    try:
-        return json.loads(stripped)
-    except (ValueError, TypeError):
-        pass
-    match = _JSONP_WRAPPER.match(stripped)
-    if match is None:
-        return None
-    try:
-        return json.loads(match.group(1).strip())
-    except (ValueError, TypeError):
-        return None
-
-
-def _parse_us_secid(payload: Any) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    table = payload.get("QuotationCodeTable")
-    if not isinstance(table, dict):
-        return None
-    candidates = table.get("Data")
-    if not isinstance(candidates, list):
-        return None
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        quote_id = candidate.get("QuoteID")
-        if isinstance(quote_id, str) and "." in quote_id:
-            market = quote_id.split(".", 1)[0]
-            if market in ("105", "106", "107"):
-                return quote_id
-    return None
-
-
-def _resolve_us_secid(code: str) -> str | None:
-    if code in _US_SECID_CACHE:
-        return _US_SECID_CACHE[code]
-    secid: str | None = None
-    try:
-        payload = get_json(
-            _SEARCH_URL,
-            params={"input": code, "type": "14", "count": "10"},
-        )
-        if isinstance(payload, str):
-            payload = _strip_jsonp(payload)
-        secid = _parse_us_secid(payload)
-    except Exception as exc:
-        logger.warning("eastmoney secid search failed for %s: %s", code, exc)
-    _US_SECID_CACHE[code] = secid
-    return secid
-
-
 def resolve_secid(symbol: str) -> str | None:
-    if not symbol or "." not in symbol:
+    """Resolve Eastmoney secid for A-share symbols only (.SH/.SZ/.BJ)."""
+    normalized = validate_a_share(symbol or "")
+    if not normalized:
         return None
-    code, _, suffix = symbol.rpartition(".")
-    code = code.strip().upper()
-    suffix = suffix.strip().upper()
-    if not code:
-        return None
-    if suffix in A_SHARE_SUFFIXES:
-        return _resolve_a_share_secid(code, suffix)
-    if suffix == "HK":
-        return f"116.{code.zfill(5)}"
-    if suffix == "US":
-        return _resolve_us_secid(code)
-    return None
+    code, _, suffix = normalized.rpartition(".")
+    return _resolve_a_share_secid(code, suffix)
 
 
 def bare_a_share_code(symbol: str) -> str | None:

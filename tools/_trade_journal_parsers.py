@@ -18,7 +18,7 @@ import pandas as pd
 FormatName = str  # "tonghuashun" | "eastmoney" | "futu" | "generic" | "unknown"
 
 _A_SHARE_EXCHANGE_MAP = {
-    # prefix → suffix; Shanghai Main + STAR, Shenzhen Main + SME + ChiNext, BSE
+    # 保留兼容；实际判定见 market.a_share_code
     ("6",): ".SH",
     ("0", "3"): ".SZ",
     ("4", "8"): ".BJ",
@@ -131,14 +131,8 @@ def _normalize_side(raw: Any) -> str:
 
 def _qualify_a_share(code: str) -> str:
     """Append .SH/.SZ/.BJ suffix to a bare A-share ticker."""
-    code = str(code).strip().zfill(6)
-    if "." in code:
-        return code.upper()
-    first = code[0]
-    for prefixes, suffix in _A_SHARE_EXCHANGE_MAP.items():
-        if first in prefixes:
-            return code + suffix
-    return code
+    from market.a_share_code import to_a_share_symbol
+    return to_a_share_symbol(str(code).strip())
 
 
 def _to_float(val: Any, default: float = 0.0) -> float:

@@ -52,11 +52,13 @@ def _df_to_records(df: pd.DataFrame, limit: int = 0) -> list[dict[str, Any]]:
 
 
 def _ok(data: Any, **meta: Any) -> str:
-    return json.dumps({"ok": True, **meta, "data": data}, ensure_ascii=False, default=str)
+    from market.envelope import ok
+    return ok(data, **meta)
 
 
 def _err(message: str) -> str:
-    return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
+    from market.envelope import err
+    return err(message)
 
 
 # ===================================================================

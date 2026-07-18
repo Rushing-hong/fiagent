@@ -36,12 +36,8 @@ def _clist(params: dict[str, Any]) -> Any:
 
 
 def _suffix(bare: str) -> str:
-    bare = str(bare).zfill(6)
-    if bare.startswith(("5", "6", "9")):
-        return f"{bare}.SH"
-    if bare.startswith(("4", "8")):
-        return f"{bare}.BJ"
-    return f"{bare}.SZ"
+    from market.a_share_code import to_a_share_symbol
+    return to_a_share_symbol(str(bare).zfill(6))
 
 
 def _is_st(name: str) -> bool:
@@ -147,7 +143,7 @@ class BuildTradableUniverseTool(BaseTool):
             },
         },
     }
-    is_readonly = True
+    is_readonly = False  # 默认可 save_snapshot 写 universe
 
     def execute(self, args: dict, ctx) -> str:
         min_price = to_float(args.get("min_price"))

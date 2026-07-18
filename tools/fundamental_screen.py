@@ -86,32 +86,55 @@ class ScreenFundamentalTool(BaseTool):
         if max_pe is None and max_pb is None and min_roe is None and min_market_cap is None and min_dividend_yield is None:
             return err("至少指定一个筛选条件: max_pe/max_pb/min_roe/min_market_cap/min_dividend_yield")
 
-        # Fetch from push2 (max 500 stocks to filter)
+        # 按主筛序分页拉取（最多 5×500），避免只扫 PE 最低 500 只
+        fid_map = {
+            "pe": "f9",
+            "pb": "f23",
+            "roe": "f37",
+            "market_cap": "f20",
+            "dividend_yield": "f115",
+        }
+        fid = fid_map.get(sort_by, "f9")
+        # 高优指标降序；PE/PB 升序更易命中低估值
+        po = "1" if sort_by in ("pe", "pb") else "0"
+        rows: list[Any] = []
+        pages = 5
         try:
-            payload = get_json(
-                _CLIST_URL,
-                params={
-                    "pn": "1",
-                    "pz": "500",
-                    "po": "1",
-                    "fid": "f9",  # sort by PE ascending by default
-                    "fs": _FS_A,
-                    "fields": _FIELDS,
-                },
-            )
+            for pn in range(1, pages + 1):
+                payload = get_json(
+                    _CLIST_URL,
+                    params={
+                        "pn": str(pn),
+                        "pz": "500",
+                        "po": po,
+                        "fid": fid,
+                        "fs": _FS_A,
+                        "fields": _FIELDS,
+                        "fltt": "2",
+                    },
+                )
+                page_rows = push2_diff_rows(payload)
+                if not page_rows:
+                    break
+                rows.extend(page_rows)
+                if len(page_rows) < 500:
+                    break
         except Exception as e:
             return err(f"数据获取失败: {e}")
 
-        rows = push2_diff_rows(payload)
         if not rows:
             return err("未获取到行情数据")
 
         results = []
+        seen_codes: set[str] = set()
         for raw in rows:
             if not isinstance(raw, dict) or not raw.get("f12"):
                 continue
 
             code = str(raw.get("f12"))
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
             name = str(raw.get("f14", ""))
 
             # ST filter
@@ -171,10 +194,18 @@ class ScreenFundamentalTool(BaseTool):
         if min_market_cap is not None: filters_applied["min_market_cap"] = min_market_cap
         if min_dividend_yield is not None: filters_applied["min_dividend_yield"] = min_dividend_yield
 
-        return ok({
-            "filters": filters_applied,
-            "exclude_st": exclude_st,
-            "sort_by": sort_by,
-            "count": len(top),
-            "stocks": top,
-        }, source="eastmoney", market="a_share")
+        return ok(
+            {
+                "filters": filters_applied,
+                "exclude_st": exclude_st,
+                "sort_by": sort_by,
+                "count": len(top),
+                "stocks": top,
+            },
+            quality="degraded" if len(seen_codes) >= pages * 500 else "normal",
+            note=(
+                f"scanned {len(seen_codes)} names via push2 ({fid}/{pages} pages max)"
+            ),
+            source="eastmoney",
+            market="a_share",
+        )

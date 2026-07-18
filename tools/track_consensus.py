@@ -197,7 +197,7 @@ class TrackConsensusTool(BaseTool):
         },
         "required": ["code"],
     }
-    is_readonly = True
+    is_readonly = False  # 无条件写 consensus 快照
 
     def execute(self, args: dict, ctx) -> str:
         code = validate_a_share(str(args.get("code") or ""))

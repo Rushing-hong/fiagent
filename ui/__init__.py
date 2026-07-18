@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from rich import box
 from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
@@ -111,7 +112,10 @@ class AgentUI:
         if self._tui_stream_queued:
             return True
         self._tui_stream_queued = True
-        self._tui.call_from_thread(self._tui_deliver_stream)
+        if threading.current_thread() is threading.main_thread():
+            self._tui_deliver_stream()
+        else:
+            self._tui.call_from_thread(self._tui_deliver_stream)
         return True
 
     def _tui_deliver_stream(self) -> None:
@@ -130,7 +134,10 @@ class AgentUI:
         if self._tui_think_queued:
             return True
         self._tui_think_queued = True
-        self._tui.call_from_thread(self._tui_deliver_think)
+        if threading.current_thread() is threading.main_thread():
+            self._tui_deliver_think()
+        else:
+            self._tui.call_from_thread(self._tui_deliver_think)
         return True
 
     def _tui_deliver_think(self) -> None:
@@ -149,7 +156,10 @@ class AgentUI:
         if self._tui_activity_queued:
             return True
         self._tui_activity_queued = True
-        self._tui.call_from_thread(self._tui_deliver_activity)
+        if threading.current_thread() is threading.main_thread():
+            self._tui_deliver_activity()
+        else:
+            self._tui.call_from_thread(self._tui_deliver_activity)
         return True
 
     def _tui_deliver_activity(self) -> None:
@@ -324,22 +334,22 @@ class AgentUI:
         self.console.print(Rule(title, style="accent"))
 
     def info(self, message: str) -> None:
-        if self._tui_call("mount_line", f"[dim]{message}[/]", classes="line-info"):
+        if self._tui_call("mount_line", f"[dim]{rich_escape(message)}[/]", classes="line-info"):
             return
         self.console.print(f"[muted]ℹ[/] {message}")
 
     def success(self, message: str) -> None:
-        if self._tui_call("mount_line", f"[green]{message}[/]", classes="line-info"):
+        if self._tui_call("mount_line", f"[green]{rich_escape(message)}[/]", classes="line-info"):
             return
         self.console.print(f"[ok]✓[/] {message}")
 
     def warn(self, message: str) -> None:
-        if self._tui_call("mount_line", f"[yellow]{message}[/]", classes="line-warn"):
+        if self._tui_call("mount_line", f"[yellow]{rich_escape(message)}[/]", classes="line-warn"):
             return
         self.console.print(f"[warn]![/] {message}")
 
     def error(self, message: str) -> None:
-        if self._tui_call("mount_line", f"[red]{message}[/]", classes="line-err"):
+        if self._tui_call("mount_line", f"[red]{rich_escape(message)}[/]", classes="line-err"):
             return
         self.console.print(Panel(message, title="错误", border_style="err", box=box.ROUNDED))
 
@@ -403,14 +413,16 @@ class AgentUI:
         else:
             session_line = f"[title]{session_title}[/] [muted]（有对话后自动保存）[/]"
         table.add_row("Session", session_line)
+        from ui.prefs import effort_label, model_label, ui_mode_label
+
+        table.add_row("模型", f"{model_label()}  ·  强度 {effort_label()}")
         table.add_row("Skills", ", ".join(skills) if skills else "无")
         table.add_row("Hooks", str(len(hooks)) if hooks else "无")
         think = "展开" if self.thinking_mode == "show" else "折叠一行"
-        table.add_row("思考", think)
-        from ui.prefs import ui_mode_label
+        table.add_row("思考显示", think)
         table.add_row("界面", ui_mode_label(ui_mode if ui_mode in ("tui", "plain") else None))
         table.add_row("展开", "[muted]e[/] 最新  [muted]1-9[/] 对应项  [muted]list[/] 列表")
-        table.add_row("运行中", "[muted]Esc[/] 暂停")
+        table.add_row("运行中", "[muted]Esc[/] 暂停  [muted]/model /effort[/] 切换")
         self.console.print(Panel(table, title="就绪", border_style="green", box=box.ROUNDED))
         self.console.print()
 
@@ -479,6 +491,14 @@ class AgentUI:
     def clear_thinking_shown(self) -> None:
         self._thinking_shown = False
 
+    def show_context_progress(self, usage: dict) -> None:
+        """更新上下文占用进度（状态栏 / 纯终端一行）。"""
+        label = usage.get("label") or ""
+        if self._tui_call("show_context_progress", usage):
+            return
+        if label:
+            self.console.print(f"[muted]{label}[/]")
+
     def llm_round_start(self, round_idx: int) -> None:
         self._reply_streamed = False
         self._thinking_shown = False
@@ -523,12 +543,14 @@ class AgentUI:
     def stream_thinking_end(self, text: str) -> None:
         self._thinking_shown = bool(text)
         self._tui_think_pending = text
+        self._tui_think_queued = False
         if self._tui_call("stream_thinking_end", text):
             return
 
     def stream_reply_begin(self) -> None:
         self.llm_activity_clear()
         self._tui_stream_pending = ""
+        self._tui_stream_queued = False
         if self._tui_call("stream_reply_begin"):
             return
         from rich.live import Live
@@ -541,6 +563,7 @@ class AgentUI:
         self._plain_stream_live.start()
 
     def stream_reply_update(self, content: str) -> None:
+        # TUI：只写 pending，由 tick 刷新，避免每 token call_from_thread 阻塞
         self._tui_stream_pending = content
         if self._tui:
             return
@@ -701,8 +724,9 @@ class AgentUI:
         if self._tui_call("tui_show_tool_result", name, result):
             return
         if name in self.INLINE_TOOLS and not self.verbose and len(result) < 400:
-            preview = result.strip().splitlines()[0][:72]
-            if len(result.strip().splitlines()[0]) > 72:
+            first = next(iter(result.strip().splitlines()), "(empty)")
+            preview = first[:72]
+            if len(first) > 72:
                 preview += "…"
             self.console.print(Text.assemble(("  ok ", "ok"), (name, "tool"), (f"  {preview}", "muted")))
             return
@@ -751,6 +775,55 @@ class AgentUI:
             return
         if msg.content:
             self.show_reply(msg.content)
+
+    def hydrate_messages(self, messages: list[dict]) -> None:
+        """把已保存的对话历史回放到界面（OpenCode sync.session.sync 风格）。"""
+        tool_names: dict[str, str] = {}
+        for msg in messages:
+            role = msg.get("role")
+            if role == "system":
+                continue
+            if role == "user":
+                content = msg.get("content") or ""
+                if content:
+                    self.show_user_message(content)
+                continue
+            if role == "assistant":
+                reasoning = msg.get("reasoning_content")
+                if reasoning:
+                    self.show_thinking(reasoning)
+                tool_calls = msg.get("tool_calls") or []
+                if tool_calls:
+                    self.rule("工具调用")
+                    for tc in tool_calls:
+                        if not isinstance(tc, dict):
+                            continue
+                        fn = tc.get("function") or {}
+                        name = str(fn.get("name") or "tool")
+                        tid = str(tc.get("id") or "")
+                        if tid:
+                            tool_names[tid] = name
+                        raw_args = fn.get("arguments") or ""
+                        try:
+                            parsed = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                            args_text = json.dumps(parsed, ensure_ascii=False, indent=2)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            args_text = str(raw_args)
+                        if self.use_tui:
+                            if not args_text.strip() or args_text.strip() == "{}":
+                                self._tui_call("mount_line", f"  > {name}", classes="line-tool")
+                            else:
+                                self._tui_call("tui_show_tool_call", name, args_text)
+                        else:
+                            self._compact_line(prefix="->", label=name, meta="", style="tool")
+                content = msg.get("content")
+                if content:
+                    self.show_reply(content)
+                continue
+            if role == "tool":
+                tid = str(msg.get("tool_call_id") or "")
+                name = tool_names.get(tid, "tool")
+                self.show_tool_result(name, msg.get("content") or "")
 
     @contextmanager
     def llm_status(self, message: str):

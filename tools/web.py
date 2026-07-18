@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 import time
 from urllib.parse import urlsplit
 
@@ -22,6 +23,18 @@ _DEFAULT_BACKENDS = "duckduckgo, google, bing, brave, mojeek, yahoo"
 _MAX_ATTEMPTS = 3
 
 
+def _ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or (hasattr(ip, "is_unspecified") and ip.is_unspecified)
+        or not ip.is_global
+    )
+
+
 def _url_allowed(url: str) -> tuple[bool, str]:
     try:
         parsed = urlsplit(url.strip())
@@ -34,12 +47,27 @@ def _url_allowed(url: str) -> tuple[bool, str]:
     host = parsed.hostname.rstrip(".").lower()
     if host in ("localhost",) or host.endswith(".localhost") or host.endswith(".local"):
         return False, "target URL is not allowed"
+    # 字面 IP
     try:
-        ip = ipaddress.ip_address(host.split("%", 1)[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or not ip.is_global:
+        if _ip_blocked(ipaddress.ip_address(host.split("%", 1)[0])):
             return False, "target URL is not allowed"
+        return True, ""
     except ValueError:
         pass
+    # 主机名：解析全部 A/AAAA，拒绝落在非全局地址（防 DNS rebinding / nip.io）
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False, "target URL is not allowed"
+    if not infos:
+        return False, "target URL is not allowed"
+    for info in infos:
+        addr = info[4][0]
+        try:
+            if _ip_blocked(ipaddress.ip_address(addr.split("%", 1)[0])):
+                return False, "target URL is not allowed"
+        except ValueError:
+            return False, "target URL is not allowed"
     return True, ""
 
 

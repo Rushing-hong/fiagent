@@ -162,7 +162,6 @@ SKILL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
             "event-driven",
             "sector-rotation",
             "seasonal",
-            "cross-market-strategy",
             "options-strategy",
             "options-payoff",
             "convertible-bond",

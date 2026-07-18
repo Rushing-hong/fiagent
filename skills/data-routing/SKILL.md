@@ -28,7 +28,7 @@ auto 链：`tencent → mootdx → eastmoney → baostock → akshare`
 | 技术形态 | `pattern` |
 | 因子 IC/IR | `factor_analysis` |
 | 代码搜索 | `search_symbol` |
-| 全市场筛选 | `screen_market` |
+| 全市场筛选 | `screen_market`（push2→push2delay→akshare；`ascending=true` 跌幅榜） |
 | 个股资金流 | `get_fund_flow` |
 | 北向资金 | `get_northbound_flow` |
 | 龙虎榜 | `get_dragon_tiger` |
@@ -46,10 +46,9 @@ auto 链：`tencent → mootdx → eastmoney → baostock → akshare`
 
 ## 相关 Skills
 
-`regulatory-knowledge` `chanlun` `etf-analysis` `macro-analysis` `event-driven` `vnpy-export` `trade-journal` `factor-research` `multi-factor`
+`regulatory-knowledge` `chanlun` `etf-analysis` `macro-analysis` `event-driven` `trade-journal` `factor-research` `multi-factor`
 
-## 尚未接入（仅 skill 方法论）
+## 回测与未接入项
 
-- `backtest` 回测引擎（Vibe-Trading 完整 runner 未迁入）
-- `alpha_bench` / `shadow_account` 模拟盘链路
-- A 股期权链工具（options-* skills 有框架）
+- **回测**：用工具 `run_backtest`（日频默认 T+1 + `signal_lag=1` + 开盘成交；支持 `universe_asof`、Layer1/2 归因）
+- **未接入（仅 skill 方法论）**：A 股期权链完整链路（options-* skills 有框架）；商业级完整 CNE5 / L2 逐笔

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import threading
 import time
@@ -18,10 +19,20 @@ DEFAULT_USER_AGENT = (
 )
 _JITTER_MAX_S = 0.4
 
+# 连接被对端掐断 / 超时：有限次退避重试（东财 RemoteDisconnected 常见）
+_HTTP_RETRIES = max(1, int(os.environ.get("FIAGENT_HTTP_RETRIES", "3")))
+_HTTP_RETRY_BACKOFF = float(os.environ.get("FIAGENT_HTTP_RETRY_BACKOFF", "0.8"))
+
 _sessions: dict[str, dict[int, requests.Session]] = {}  # host_key → thread_id → Session
 _session_lock = threading.Lock()
 _last_request: dict[str, float] = {}
 _throttle_lock = threading.Lock()
+
+_RETRYABLE = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+)
 
 
 def _get_session(host_key: str) -> requests.Session:
@@ -50,8 +61,6 @@ def _wait(host_key: str, min_interval: float) -> None:
 
 
 def resolve_min_interval(env_var: str, default: float) -> float:
-    import os
-
     raw = os.getenv(env_var)
     if raw is None:
         return default
@@ -70,11 +79,32 @@ def throttled_get(
     headers: dict[str, str] | None = None,
     timeout: float = 15.0,
 ) -> requests.Response:
-    _wait(host_key, min_interval)
-    session = _get_session(host_key)
-    resp = session.get(url, params=params, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    return resp
+    last_exc: BaseException | None = None
+    for attempt in range(1, _HTTP_RETRIES + 1):
+        _wait(host_key, min_interval)
+        session = _get_session(host_key)
+        try:
+            resp = session.get(url, params=params, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except _RETRYABLE as exc:
+            last_exc = exc
+            if attempt >= _HTTP_RETRIES:
+                break
+            sleep_for = _HTTP_RETRY_BACKOFF * attempt + random.uniform(0, _JITTER_MAX_S)
+            logger.warning(
+                "HTTP retry %s/%s %s: %s (sleep %.1fs)",
+                attempt,
+                _HTTP_RETRIES,
+                host_key,
+                exc,
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+        except requests.exceptions.HTTPError:
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def throttled_get_json(

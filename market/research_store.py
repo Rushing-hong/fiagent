@@ -338,19 +338,23 @@ class ResearchStore:
             eps = p.get("eps")
             if eps is None:
                 continue
+            meta = json.dumps(
+                {k: v for k, v in p.items() if k not in ("year", "fiscal_year", "eps")},
+                ensure_ascii=False,
+            )
+            conn.execute(
+                """
+                DELETE FROM consensus_snapshots
+                WHERE code=? AND asof=? AND source=? AND fiscal_year=?
+                """,
+                (code, asof, source, year),
+            )
             conn.execute(
                 """
                 INSERT INTO consensus_snapshots(code, asof, source, fiscal_year, eps, meta_json)
                 VALUES(?,?,?,?,?,?)
                 """,
-                (
-                    code,
-                    asof,
-                    source,
-                    year,
-                    float(eps),
-                    json.dumps({k: v for k, v in p.items() if k not in ("year", "fiscal_year", "eps")}, ensure_ascii=False),
-                ),
+                (code, asof, source, year, float(eps), meta),
             )
             n += 1
         conn.commit()
@@ -376,7 +380,11 @@ class ResearchStore:
                 "eps": row["eps"],
             })
         if days > 0 and out:
-            cutoff = (datetime.now() - __import__("datetime").timedelta(days=days)).strftime("%Y-%m-%d")
+            from datetime import timezone
+
+            cutoff = (
+                datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)
+            ).strftime("%Y-%m-%d")
             out = [x for x in out if str(x["asof"])[:10] >= cutoff]
         return out
 
@@ -419,16 +427,7 @@ class ResearchStore:
             (name, asof),
         )
         row = cur.fetchone()
-        if row is None:
-            # fallback: earliest after
-            cur = conn.execute(
-                """
-                SELECT asof, name, codes_json, meta_json FROM universe_snapshots
-                WHERE name=? ORDER BY abs(julianday(asof) - julianday(?)) ASC LIMIT 1
-                """,
-                (name, asof),
-            )
-            row = cur.fetchone()
+        # 禁止向前取未来快照（避免存活偏差）；无 asof<= 则返回 None
         if row is None:
             return None
         return {

@@ -20,9 +20,8 @@ Uses percentile ranking of historical volatility (HV) to capture volatility mean
 
 ## Key Implementation Details
 
-- HV = `returns.rolling(hv_window).std() * sqrt(252)` (annualized)
+- HV = `returns.rolling(hv_window).std() * sqrt(252)` (annualized; A-share trading days)
 - Percentile = `hv.rolling(lookback).rank(pct=True) * 100`
-- For cryptocurrencies, use 365 instead of 252 as the annualization factor
 
 ## Parameters
 
@@ -32,13 +31,12 @@ Uses percentile ranking of historical volatility (HV) to capture volatility mean
 | lookback | 120 | Lookback period for percentile ranking |
 | low_pct | 20.0 | Low-volatility threshold (percentile) |
 | high_pct | 80.0 | High-volatility threshold (percentile) |
-| annualize | 252 | Annualization factor (252 for China A-shares, 365 for crypto) |
+| annualize | 252 | Annualization factor for China A-shares |
 
 ## Common Pitfalls
 
 - Before the lookback window is filled, there is not enough data to compute percentiles, so the signal should be 0 (`fillna`)
 - Volatility is not direction. Going long in low-volatility regimes does not guarantee price appreciation; it only means volatility expansion is statistically more likely
-- Cryptocurrencies trade 7x24, so `annualize` should be set to 365
 
 ## Dependencies
 

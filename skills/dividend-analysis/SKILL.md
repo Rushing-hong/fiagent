@@ -148,16 +148,15 @@ Buying before the ex-dividend date only to collect the dividend is not a free-mo
 
 Use this only as an event-risk analysis, not as a default recommendation.
 
-## Data Sources
+## Data Sources（A 股）
 
-| Market | Useful Fields |
-|--------|---------------|
-| A-shares | Tushare `dividend`, `daily_basic.dv_ttm`, `fina_indicator`, `cashflow` |
-| US/HK | yfinance `Ticker.dividends`, `Ticker.info`, financial statements, cash flow |
-| ETFs | distribution yield, SEC yield, holdings yield, expense ratio, distribution history |
-| REITs | FFO, AFFO, occupancy, debt maturities, AFFO payout |
+| 来源 | 字段 / 用途 |
+|------|-------------|
+| `get_dividend_calendar` | 除权除息、每股分红/送转、股息率 |
+| `get_financial_statements(statement="indicators")` | ROE、净利润等可持续性指标 |
+| Tushare（环境已配置时，经 `run_python`） | `dividend` / `daily_basic.dv_ttm` / `fina_indicator` / `cashflow` |
 
-When live data is unavailable, state the limitation and provide the analysis template instead of inventing dividend figures.
+取数失败时说明局限并给出分析模板，勿编造分红数字。
 
 ## Output Template
 

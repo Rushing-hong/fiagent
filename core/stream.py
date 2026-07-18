@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from core.turn_control import turn_control
 from ui import ui
+from ui.prefs import get_model, get_reasoning_effort
 
 
 def _merge_tool_delta(acc: dict[int, dict], tc_delta: Any) -> None:
@@ -75,8 +76,9 @@ def stream_chat_completion(
     client: OpenAI,
     *,
     messages: list,
-    tools: list,
+    tools: list | None,
     round_idx: int,
+    tool_choice: str = "auto",
 ) -> SimpleNamespace:
     ui.llm_round_start(round_idx)
 
@@ -86,19 +88,45 @@ def stream_chat_completion(
     reply_open = False
     thinking_open = False
 
-    stream = client.chat.completions.create(
-        model="deepseek-v4-pro",
-        messages=messages,
-        tools=tools,
-        tool_choice="auto",
-        stream=True,
-        reasoning_effort="high",
-        extra_body={"thinking": {"type": "enabled"}},
+    model = get_model()
+    effort = get_reasoning_effort()
+    create_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+    }
+    # 末步关工具：不传 tools，或传空列表 + tool_choice=none
+    if tools:
+        create_kwargs["tools"] = tools
+        create_kwargs["tool_choice"] = tool_choice
+    else:
+        create_kwargs["tool_choice"] = "none"
+    if effort == "off":
+        create_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    else:
+        create_kwargs["reasoning_effort"] = effort
+        create_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+
+    # Thought 框要等 API 吐出首个 reasoning token 才会出现；
+    # thinking 开启时 prefill + 内部思考常占数秒～数十秒，先给可见进度。
+    tool_n = len(tools) if tools else 0
+    ui.llm_activity_update(
+        f"连接 {model} · effort={effort} · {tool_n} tools…"
+        + (" · 步骤上限收尾" if not tools else "")
+    )
+    stream = client.chat.completions.create(**create_kwargs)
+    ui.llm_activity_update(
+        "等待首包…"
+        + ("（thinking 开启时首字前可能较久）" if effort != "off" else "")
     )
 
     try:
+        got_first = False
         for chunk in stream:
             turn_control.checkpoint(f"第 {round_idx} 轮流式推理")
+            if not got_first:
+                got_first = True
+                ui.llm_activity_update("流式输出中…")
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta

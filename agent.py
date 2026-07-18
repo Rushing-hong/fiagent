@@ -11,7 +11,13 @@ Usage:
 import sys
 
 from core.cli import bootstrap, parse_args, resolve_ui_mode
-from core.commands import HANDLED_RESTART, SESSION_COMMANDS, handle_session_command
+from core.commands import (
+    HANDLED_REEXEC,
+    HANDLED_RESTART,
+    SESSION_COMMANDS,
+    handle_session_command,
+    reexec_self,
+)
 from core.loop import run_agent_turn
 from core.turn_control import TurnAborted
 from paths import PROJECT_ROOT
@@ -23,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def main_plain(args) -> None:
     client, hooks, store, ctx, current, messages, loaded_hooks = bootstrap(args)
+    reexec_resume: str | None | bool = False
 
     try:
         ui.banner()
@@ -34,6 +41,7 @@ def main_plain(args) -> None:
             current_time=ctx.format_now(),
             ui_mode="plain",
         )
+        ui.hydrate_messages(messages)
 
         while True:
             try:
@@ -55,7 +63,8 @@ def main_plain(args) -> None:
                 )
                 if not handled:
                     ui.warn(f"未知命令: {user_input}，输入 /help 查看帮助")
-                elif handled == HANDLED_RESTART:
+                elif handled in (HANDLED_REEXEC, HANDLED_RESTART):
+                    reexec_resume = current.id if current else None
                     break
                 else:
                     if new_messages is not None:
@@ -68,6 +77,7 @@ def main_plain(args) -> None:
                             current_time=ctx.format_now(),
                             ui_mode="plain",
                         )
+                        ui.hydrate_messages(messages)
                     elif user_input.strip().lower() == "/reload":
                         ctx.sync_system_message(messages)
                 continue
@@ -94,6 +104,9 @@ def main_plain(args) -> None:
                     if updated:
                         current = updated
                 store.save_messages(current.id, messages)
+                from ui.prefs import set_last_session_id
+
+                set_last_session_id(current.id)
                 hooks.emit("turn.end", {
                     "input": user_input,
                     "messages": messages,
@@ -104,13 +117,16 @@ def main_plain(args) -> None:
                 ui.warn("本轮已中止，对话未保存本轮内容")
             except Exception as e:
                 ui.error(str(e))
-                messages.pop()
+                del messages[turn_start:]
     finally:
         hooks.emit("session.end", {
             "session_id": current.id if current else None,
             "messages": messages,
         })
         store.close()
+
+    if reexec_resume is not False:
+        reexec_self(resume_id=reexec_resume if isinstance(reexec_resume, str) else None)
 
 
 def main():

@@ -154,46 +154,26 @@ connect_score = {
 
 ## Data Access
 
-### Via Tushare (A-share perspective)
+### 内置工具（优先）
 
-```python
-import tushare as ts
-pro = ts.pro_api()
-
-# Daily Northbound/Southbound aggregate flows
-df = pro.moneyflow_hsgt(start_date="20260101", end_date="20260330")
-# Columns: trade_date, ggt_ss (Shanghai SB), ggt_sz (Shenzhen SB),
-#           hgt (Shanghai NB), sgt (Shenzhen NB), north_money, south_money
-
-# Top 10 Northbound active stocks
-df = pro.hsgt_top10(trade_date="20260328", market_type="1")  # 1=Shanghai, 3=Shenzhen
-# Columns: trade_date, ts_code, name, close, change, rank, market_type,
-#           amount (trade amount), net_amount (net buy), buy, sell
+```
+get_northbound_flow(lookback_days=30)   # 沪股通+深股通净流入（东财 kamt）
+get_fund_flow(codes=["600519.SH"], ...) # 个股主力流，辅助解读北向抱团标的
 ```
 
-### Via yfinance (HK perspective)
+### Tushare（环境已配置时）
 
-```python
-import yfinance as yf
-
-# HK-listed stocks price data
-tencent = yf.download("0700.HK", start="2025-01-01", end="2026-03-30", progress=False)
-alibaba = yf.download("9988.HK", start="2025-01-01", end="2026-03-30", progress=False)
-
-# AH Premium Index (proxy via Hang Seng indices)
-hsi = yf.download("^HSI", start="2025-01-01", end="2026-03-30", progress=False)
-```
+经 `run_python` 可调 `moneyflow_hsgt` / `hsgt_top10` 做南向或 Top10 明细。
 
 ### Key Data Points to Track
 
 | Metric | Source | Frequency | Threshold |
 |--------|--------|-----------|-----------|
-| Northbound daily net buy | Tushare / HKEX | Daily | >RMB 5B = significant |
-| Northbound 20-day cumulative | Calculated | Daily | >RMB 30B = trend |
-| Southbound daily net buy | Tushare / HKEX | Daily | >HKD 3B = significant |
-| AH Premium Index | Hang Seng | Daily | >130 = H-share value |
-| Quota utilization | HKEX | Intraday | >50% = strong conviction |
-| NB Top 10 concentration | Tushare | Daily | Top 3 names >50% = concentrated bet |
+| Northbound daily net buy | `get_northbound_flow` | Daily | >RMB 5B = significant |
+| Northbound 20-day cumulative | 由工具历史序列计算 | Daily | >RMB 30B = trend |
+| Southbound daily net buy | Tushare / 公开披露 | Daily | >HKD 3B = significant |
+| AH Premium / 额度 | 公开指数或披露 | Daily | 按分析框架解读 |
+| NB Top 10 concentration | Tushare | Daily | Top 3 >50% = concentrated |
 
 ## Output Format
 

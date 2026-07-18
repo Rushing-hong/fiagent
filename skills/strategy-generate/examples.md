@@ -1,49 +1,52 @@
-# Strategy Generate — Examples
+# Strategy Generate — Examples（A 股）
 
-## Example 1: A-share dual MA crossover (tushare)
+工作流：`get_market_data` →（可选自定义信号 CSV）→ `run_backtest`。
 
-User: "用000001.SZ做双均线金叉策略，短期5日长期20日，回测2024年"
+## Example 1: 双均线（内置策略）
 
-Tool call sequence:
-1. load_skill("strategy-generate") → 获得工作流指引
-2. write_file("config.json") → 配置标的/日期/参数
-   ```json
-   {"source": "tushare", "codes": ["000001.SZ"], "start_date": "2024-01-01", "end_date": "2024-12-31", "initial_cash": 1000000, "commission": 0.001, "extra_fields": null}
-   ```
-3. write_file("code/signal_engine.py") → 双均线策略代码
-4. bash("python -c \"import ast; ast.parse(open('code/signal_engine.py').read()); print('OK')\"") → AST 语法检查
-5. backtest(run_dir=...) → 执行回测（引擎内置）
-6. read_file("artifacts/metrics.csv") → 查看结果，按评审标准判断
-7. (如需修复) edit_file("code/signal_engine.py", ...) → backtest → read_file
+User: "用 000001.SZ 做双均线金叉，短期 5 日长期 20 日，回测 2024 年"
 
-## Example 2: US stock RSI strategy (yfinance)
+```
+1. load_skill("strategy-generate")
+2. run_backtest(
+     codes=["000001.SZ"],
+     start_date="2024-01-01",
+     end_date="2024-12-31",
+     strategy="ma_cross",
+     strategy_params={"fast": 5, "slow": 20}
+   )
+3. 读返回的 metrics / trades，按需迭代参数
+```
 
-User: "Build RSI strategy on AAPL, buy when RSI<30 sell when RSI>70, backtest 2024"
+## Example 2: RSI（内置策略）
 
-Tool call sequence:
-1. load_skill("strategy-generate") → 获得工作流指引
-2. write_file("config.json") → 配置
-   ```json
-   {"source": "yfinance", "codes": ["AAPL.US"], "start_date": "2024-01-01", "end_date": "2024-12-31", "initial_cash": 1000000, "commission": 0.001, "extra_fields": null}
-   ```
-3. write_file("code/signal_engine.py") → RSI 策略代码
-4. bash("python -c \"import ast; ast.parse(open('code/signal_engine.py').read()); print('OK')\"") → AST 检查
-5. backtest(run_dir=...) → 执行回测（引擎内置）
-6. read_file("artifacts/metrics.csv") → 查看结果
-7. (如需修复) edit_file → backtest → read_file
+User: "茅台 RSI 策略，RSI<30 买、>70 卖，回测 2024"
 
-## Example 3: Crypto trend strategy (okx)
+```
+1. run_backtest(
+     codes=["600519.SH"],
+     start_date="2024-01-01",
+     end_date="2024-12-31",
+     strategy="rsi",
+     strategy_params={"period": 14, "oversold": 30, "overbought": 70}
+   )
+2. 分析回撤与交易次数；必要时改参数重跑
+```
 
-User: "BTC-USDT趋势跟踪策略，回测2024年"
+## Example 3: 自定义信号（布林带）
 
-Tool call sequence:
-1. load_skill("strategy-generate") → 获得工作流指引
-2. write_file("config.json") → 配置
-   ```json
-   {"source": "okx", "codes": ["BTC-USDT"], "start_date": "2024-01-01", "end_date": "2024-12-31", "initial_cash": 1000000, "commission": 0.001, "extra_fields": null}
-   ```
-3. write_file("code/signal_engine.py") → 趋势策略代码
-4. bash("python -c \"import ast; ast.parse(open('code/signal_engine.py').read()); print('OK')\"") → AST 检查
-5. backtest(run_dir=...) → 执行回测（引擎内置）
-6. read_file("artifacts/metrics.csv") → 查看结果
-7. (如需修复) edit_file → backtest → read_file
+User: "用布林带突破做 000001.SZ 回测"
+
+```
+1. get_market_data(codes=["000001.SZ"], start_date="2024-01-01", end_date="2024-12-31")
+2. write 脚本 → run_python：算信号，写出 signal.csv（index=date, columns=代码, values=-1~1）
+3. run_backtest(
+     codes=["000001.SZ"],
+     start_date="2024-01-01",
+     end_date="2024-12-31",
+     strategy="custom",
+     signal_file="signal.csv"
+   )
+```
+
+分钟级见 `minute-analysis`（`interval="5"` 等）。

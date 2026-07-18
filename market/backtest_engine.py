@@ -214,7 +214,8 @@ class Broker:
         lock_until = self.tplus1_lock.get(code)
         if lock_until is None:
             return False
-        return date > lock_until
+        # A股 T+1：按交易日（normalize），分钟线不得同日卖出
+        return pd.Timestamp(date).normalize() > pd.Timestamp(lock_until).normalize()
 
     def can_buy(self) -> bool:
         return self.cash > 0 and len(self.positions) < self.cfg.max_positions
@@ -290,7 +291,7 @@ class Broker:
             old_qty = self.positions[code] - order.quantity
             old_cost = self.avg_cost.get(code, 0) * old_qty
             self.avg_cost[code] = (old_cost + amount) / self.positions[code]
-            self.tplus1_lock[code] = date
+            self.tplus1_lock[code] = pd.Timestamp(date).normalize()
             if code not in self.open_trades:
                 self.open_trades[code] = Trade(
                     code=code, entry_date=date, exit_date=None,
@@ -335,6 +336,25 @@ class Broker:
                     t.pnl = (trade_price - t.entry_price) * t.quantity - fee
                     t.pnl_pct = t.pnl / cost if cost else 0
                     self.trades.append(t)
+            elif code in self.open_trades:
+                # 部分卖出：记一笔已平仓腿，并缩减 open_trades.quantity
+                ot = self.open_trades[code]
+                closed = Trade(
+                    code=code,
+                    entry_date=ot.entry_date,
+                    exit_date=date,
+                    entry_price=ot.entry_price,
+                    exit_price=trade_price,
+                    quantity=qty,
+                )
+                closed.exit_reason = (
+                    order.reason if getattr(order, "reason", None) else "partial_exit"
+                )
+                cost = ot.entry_price * qty
+                closed.pnl = (trade_price - ot.entry_price) * qty - fee
+                closed.pnl_pct = closed.pnl / cost if cost else 0
+                self.trades.append(closed)
+                ot.quantity -= qty
             return "filled"
 
         return "unknown_side"
@@ -546,10 +566,10 @@ class BacktestEngine:
                     d_min.strftime("%Y-%m-%d"),
                     d_max.strftime("%Y-%m-%d"),
                 )
-                # keep timestamps that fall on exchange sessions; preserve time=00:00
-                all_dates = list(cal) if len(cal) >= 2 else list(pd.bdate_range(d_min, d_max))
+                # 交易日轴：优先交易所日历；失败则用行情实际日期，禁止 bdate_range 冒充节假日
+                all_dates = list(cal) if len(cal) >= 2 else sorted(raw_dates)
             except Exception:
-                all_dates = list(pd.bdate_range(d_min, d_max))
+                all_dates = sorted(raw_dates)
         else:
             all_dates = sorted(raw_dates)
         if len(all_dates) < 2:
@@ -658,21 +678,22 @@ class BacktestEngine:
                 raw_w = apply_industry_cap(
                     raw_w, ind_map, float(self.cfg.max_industry_weight)
                 )
+            factor_asof = sig_date if sig_date is not None else date
             if self.cfg.max_momentum_exposure is not None:
                 mom = momentum_factor(
-                    data, date, codes, window=int(self.cfg.momentum_window)
+                    data, factor_asof, codes, window=int(self.cfg.momentum_window)
                 )
                 raw_w = apply_style_exposure_cap(
                     raw_w, mom, float(self.cfg.max_momentum_exposure)
                 )
             sw = int(self.cfg.style_window)
             if self.cfg.max_size_exposure is not None:
-                sz = size_factor(data, date, codes, window=sw)
+                sz = size_factor(data, factor_asof, codes, window=sw)
                 raw_w = apply_style_exposure_cap(
                     raw_w, sz, float(self.cfg.max_size_exposure)
                 )
             if self.cfg.max_vol_exposure is not None:
-                vo = vol_factor(data, date, codes, window=sw)
+                vo = vol_factor(data, factor_asof, codes, window=sw)
                 raw_w = apply_style_exposure_cap(
                     raw_w, vo, float(self.cfg.max_vol_exposure)
                 )

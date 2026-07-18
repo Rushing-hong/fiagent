@@ -1,6 +1,6 @@
 ---
 name: execution-model
-description: Trade execution modeling (backtest only) — slippage formulas (linear / square-root impact), VWAP/TWAP execution logic, market-impact cost estimation, and execution-assumption configuration.
+description: A 股回测执行假设——滑点/冲击、VWAP/TWAP 概念，对照 run_backtest 的 commission/signal_lag/impact 等参数。
 category: strategy
 ---
 
@@ -40,18 +40,13 @@ def fixed_slippage(price: float, direction: int, bps: float = 5.0) -> float:
     return price + direction * slippage
 ```
 
-**Reference fixed-slippage assumptions by market:**
+**A 股固定滑点参考：**
 
-| Market | Instrument | Suggested Slippage (bps) | Notes |
+| 分层 | 标的 | Suggested Slippage (bps) | Notes |
 |------|------|-------------|------|
-| China A-share large cap | CSI 300 constituents | 3-5 | Good liquidity |
-| China A-share small cap | CSI 1000 constituents | 5-10 | Average liquidity |
-| China micro-cap | market cap < 5 billion RMB | 10-30 | Poor liquidity |
-| US large cap | AAPL / MSFT | 1-3 | Excellent liquidity |
-| Hong Kong stocks | Hang Seng constituents | 5-10 | Less liquid than A / US |
-| BTC spot | BTC-USDT | 2-5 | Good OKX liquidity |
-| ETH spot | ETH-USDT | 3-8 | Slightly worse than BTC |
-| Small altcoins | other `-USDT` pairs | 10-50 | Liquidity varies widely |
+| 大盘 | 沪深300成分 | 3-5 | 流动性好 |
+| 中小盘 | 中证1000成分 | 5-10 | 一般 |
+| 微盘 | 市值 < 50 亿 | 10-30 | 流动性差 |
 
 ### 2. Linear Impact Model
 
@@ -76,14 +71,12 @@ def linear_impact(price: float, direction: int,
     return price * (1 + direction * impact)
 ```
 
-**Reference impact coefficients:**
+**A 股冲击系数参考：**
 
-| Market | impact_coeff | Notes |
+| 分层 | impact_coeff | Notes |
 |------|-------------|------|
-| China A-share large cap | 0.05-0.10 | 10% daily price-limit system |
-| China A-share small cap | 0.10-0.20 | Liquidity premium |
-| US equities | 0.03-0.08 | Market-maker buffering |
-| Crypto | 0.05-0.15 | 24h trading is dispersed |
+| 大盘 | 0.05-0.10 | 涨跌停制度 |
+| 中小盘 | 0.10-0.20 | 流动性溢价 |
 
 ### 3. Square-Root Impact Model (Almgren-Chriss)
 
@@ -183,90 +176,69 @@ def delayed_execution(signal_series: pd.Series, delay_bars: int = 1) -> pd.Serie
     Returns:
         Delayed signal
 
-    China A-shares: delay_bars=1 (T+1 rule)
-    Crypto: delay_bars=0 or 1
+    A 股通常 delay_bars=1（与 T+1 / signal_lag 对齐）
     """
     return signal_series.shift(delay_bars)
 ```
 
 ## Integrated Transaction-Cost Model
 
-### Total Cost Breakdown
+### Total Cost Breakdown（A 股）
 
 ```
 Total trading cost = explicit cost + implicit cost
 
-Explicit cost:
-- Commission: China A-shares 2-3 bps, crypto 0.02-0.1%
-- Stamp duty (China A-share sell side): 0.05% (sell orders only)
-- Transfer fee: negligible
+Explicit:
+- Commission: ~2-3 bps（可议）
+- Stamp duty: 0.05%（仅卖出）
+- Transfer fee: 很小
 
-Implicit cost:
-- Bid-ask spread: 0.5-5bps
-- Market impact: depends on trade size and liquidity
-- Opportunity cost: loss from not filling at the best price
+Implicit:
+- Bid-ask spread: ~0.5-5 bps
+- Market impact: 随成交量/流动性变化
+- Opportunity cost: 未按最优价成交的损失
 ```
 
-### Reference Trading Costs by Market
+### A 股成本数量级
 
-| Cost Item | China A-shares | Hong Kong | US | Crypto (OKX) |
-|--------|-----|------|------|-----------|
-| Commission (one way) | 0.025% | 0.05% | 0 (zero commission) | 0.08% (maker) |
-| Stamp duty | 0.05% (sell) | 0.1% (both sides) | 0 | 0 |
-| Bid-ask spread | 0.03-0.1% | 0.05-0.2% | 0.01-0.05% | 0.01-0.05% |
-| Total one-way | ~0.1% | ~0.2% | ~0.03% | ~0.1% |
-| Total round-trip | ~0.2% | ~0.4% | ~0.06% | ~0.2% |
+| Cost Item | 典型值 |
+|--------|--------|
+| Commission (one way) | ~0.025% |
+| Stamp duty (sell) | 0.05% |
+| Bid-ask spread | 0.03-0.1% |
+| Total one-way（粗估） | ~0.1% |
+| Total round-trip（粗估） | ~0.2% |
 
-### Cost Settings in Backtests
+### `run_backtest` 执行参数
 
-```json
-{
-  "commission": 0.001,
-  "comment": "0.1% one-way commission, already includes stamp duty and spread"
-}
-```
+| 参数 | 默认（见工具 schema） | 含义 |
+|------|----------------------|------|
+| `commission` | `0.0003` | 佣金（单向） |
+| `stamp_duty` | `0.0005` | 印花税（卖出侧） |
+| `signal_lag` | `1` | T 日信号 → T+1 成交 |
+| `exec_price` | `open` | 成交参考价 open/close |
+| `use_impact_model` | `true` | √(成交额/ADV) 冲击 |
+| `impact_coef` | `0.001` | 冲击系数 |
+| `reject_limit_lock` | `true` | 涨停买不进 / 跌停卖不出 |
+| `skip_halted` | `true` | 停牌不交易 |
+| `after_hours` | `false` | 用收盘价的粗实现 |
 
-**Recommendations**:
-- China A-shares: `commission = 0.001` (conservative, includes all costs)
-- Crypto: `commission = 0.001` (including slippage)
-- Hong Kong / US equities: `commission = 0.001-0.002`
+保守打包时可把 `commission` 提到 `0.001`（近似含滑点）。
 
 ## Backtest Execution Assumptions
 
-### Relevant `config.json` Settings
+### 信号层流动性过滤（custom）
 
-```json
-{
-  "commission": 0.001,
-  "engine": "daily",
-  "interval": "1D"
-}
-```
-
-### Advanced Execution Assumptions (implemented in `signal_engine.py`)
+在生成 `signal.csv` 的脚本里：
 
 ```python
-class SignalEngine:
-    def __init__(self):
-        # Execution assumption parameters
-        self.execution_delay = 1       # T+1 delay
-        self.slippage_bps = 5          # Fixed 5bps slippage
-        self.max_participation = 0.05  # Maximum participation rate 5%
-
-    def generate(self, data_map):
-        for code, df in data_map.items():
-            # 1. Generate raw signal
-            raw_signal = self._compute_signal(df)
-
-            # 2. Apply execution delay
-            delayed_signal = raw_signal.shift(self.execution_delay)
-
-            # 3. Apply volume filter (do not trade when liquidity is too low)
-            volume_ok = df['volume'] > df['volume'].rolling(20).mean() * 0.3
-            delayed_signal[~volume_ok] = 0
-
-            signals[code] = delayed_signal
+raw = compute_signal(df)
+delayed = raw.shift(1)  # 与 signal_lag=1 对齐；或交给引擎 signal_lag
+volume_ok = df["volume"] > df["volume"].rolling(20).mean() * 0.3
+delayed = delayed.where(volume_ok, 0.0)
 ```
+
+再调用：`run_backtest(..., strategy="custom", signal_file=..., signal_lag=0或1)`，避免脚本与引擎双重延迟。
 
 ## Analysis Framework
 

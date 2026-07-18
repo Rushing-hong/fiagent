@@ -12,7 +12,7 @@ from hooks.registry import HookRegistry
 from paths import ENV_PATH, PROJECT_ROOT
 from session import RETENTION_DAYS, SessionInfo, SessionStore
 from ui import ui
-from ui.prefs import get_ui_mode
+from ui.prefs import get_ui_mode, get_last_session_id, set_last_session_id
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,12 +138,27 @@ def _resolve_startup(store, ctx, args) -> tuple[SessionInfo | None, list[dict]]:
         if info is None:
             ui.error(f"未找到 session: {args.resume}")
             sys.exit(1)
-        messages = store.load_messages(info.id)
-        if not messages:
-            messages = ctx.fresh_messages()
-        else:
-            ctx.refresh()
-            ctx.sync_system_message(messages)
-        return info, messages
+        return _load_session(store, ctx, info)
+
+    # OpenCode --continue 风格：默认回到上次 / 最近 session
+    last_id = get_last_session_id()
+    info = store.get(last_id) if last_id else None
+    if info is None:
+        info = store.latest()
+    if info is not None:
+        set_last_session_id(info.id)
+        return _load_session(store, ctx, info)
+
     ctx.refresh()
     return None, ctx.fresh_messages()
+
+
+def _load_session(store, ctx, info: SessionInfo) -> tuple[SessionInfo, list[dict]]:
+    messages = store.load_messages(info.id)
+    if not messages:
+        messages = ctx.fresh_messages()
+    else:
+        ctx.refresh()
+        ctx.sync_system_message(messages)
+    set_last_session_id(info.id)
+    return info, messages

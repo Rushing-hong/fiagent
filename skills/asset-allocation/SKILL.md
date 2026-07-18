@@ -1,6 +1,6 @@
 ---
 name: asset-allocation
-description: Asset allocation theory and optimizer usage — MPT / Black-Litterman / risk budgeting / all-weather strategy, including guides for 4 optimizers and rebalancing rules.
+description: A 股资产配置理论与工具——MPT / BL / 风险预算 / 全天候；对接 blend_black_litterman、analyze_portfolio_risk、run_backtest。
 category: asset-class
 ---
 
@@ -8,7 +8,8 @@ category: asset-class
 
 ## Overview
 
-From asset allocation theory to practical implementation, this skill covers classical frameworks (MPT, BL, risk budgeting, all-weather) and the usage of the four optimizers built into this system. The output can be written directly into `config.json`.
+从资产配置理论到落地：MPT / Black-Litterman / 风险预算 / 全天候。  
+工具：`blend_black_litterman`（观点→权重，可写 signal CSV）、`analyze_portfolio_risk`（Barra-lite）、`run_backtest`（验证）；逆波动 / 风险平价等可用 `run_python` 按理论节公式自算。
 
 ## Asset Allocation Theory
 
@@ -46,7 +47,7 @@ Steps:
 
 **Example views**:
 - Absolute view: "China A-shares will return 10% over the next year"  → `P=[1,0,0], Q=[0.10]`
-- Relative view: "China A-shares will outperform US equities by 5%"   → `P=[1,-1,0], Q=[0.05]`
+- Relative view: "沪深300 将跑赢中证500 约 5%"   → `P=[1,-1,0], Q=[0.05]`
 
 **Parameter guidance**:
 - `τ` (uncertainty scaling): `0.025-0.05`
@@ -86,112 +87,33 @@ Simplified allocation example for China-focused portfolios:
 - 15% commodities / REITs
 ```
 
-## Guide to the 4 Optimizers
+## 工具对照
 
-### Overview of the Built-In Optimizers
+| 需求 | 工具 | 说明 |
+|------|------|------|
+| BL 观点融合 → 权重 | `blend_black_litterman` | 可写 `signal_file` 供 `run_backtest(custom)` |
+| 组合风险分解 | `analyze_portfolio_risk` | mom/size/vol（可选行业）Barra-lite |
+| 回测验证 | `run_backtest` | A 股 OHLCV；执行参数见 execution-model |
+| 逆波动 / 风险平价 / 最大分散 | `run_python` | 公式见上文理论节 |
 
-Configure them in `config.json` through `optimizer` and `optimizer_params`:
-
-| optimizer | Display Name | Core Idea | Best Use Case |
-|-----------|--------|---------|---------|
-| `equal_volatility` | Equal Volatility | Allocate weights by inverse volatility | Simple and effective baseline |
-| `risk_parity` | Risk Parity | Equalize risk contribution while accounting for correlation | Long-term robust allocation |
-| `mean_variance` | Mean-Variance | Maximize Sharpe ratio or minimize variance | When return forecasts are available |
-| `max_diversification` | Maximum Diversification | Maximize the diversification ratio | When pursuing a low-correlation portfolio |
-
-### 1. `equal_volatility`
-
-```json
-{
-  "optimizer": "equal_volatility",
-  "optimizer_params": {
-    "lookback": 60
-  }
-}
-```
-
-**Principle**: `w_i = (1/σ_i) / Σ(1/σ_j)`
-
-| Parameter | Default | Description |
-|------|--------|------|
-| lookback | 60 | Volatility calculation window (trading days) |
-
-**Advantages**: simple and fast, no return forecast required, no correlation matrix required.  
-**Disadvantages**: ignores cross-asset correlation.
-
-### 2. `risk_parity`
-
-```json
-{
-  "optimizer": "risk_parity",
-  "optimizer_params": {
-    "lookback": 60
-  }
-}
-```
-
-**Principle**: solve for weights such that each asset contributes the same amount of risk.
-
-| Parameter | Default | Description |
-|------|--------|------|
-| lookback | 60 | Covariance-matrix estimation window |
-
-**Advantages**: accounts for correlation, spreads risk more evenly, and is robust over long horizons.  
-**Disadvantages**: requires iterative solving and is sensitive to covariance estimates.
-
-### 3. `mean_variance`
-
-```json
-{
-  "optimizer": "mean_variance",
-  "optimizer_params": {
-    "lookback": 60,
-    "risk_free": 0.0
-  }
-}
-```
-
-**Principle**: Markowitz optimization that maximizes the Sharpe ratio.
-
-| Parameter | Default | Description |
-|------|--------|------|
-| lookback | 60 | Window for estimating means and covariances |
-| risk_free | 0.0 | Risk-free rate (annualized) |
-
-**Advantages**: theoretically optimal (if inputs are accurate).  
-**Disadvantages**: extremely sensitive to inputs, prone to extreme weights, and often performs poorly out of sample.  
-**Recommendation**: do not make `lookback` too short (`<30` easily overfits), and add upper/lower weight constraints.
-
-### 4. `max_diversification`
-
-```json
-{
-  "optimizer": "max_diversification",
-  "optimizer_params": {
-    "lookback": 60
-  }
-}
-```
-
-**Principle**: maximize `DR = (w'σ) / σ_p` (the diversification ratio).
-
-| Parameter | Default | Description |
-|------|--------|------|
-| lookback | 60 | Calculation window |
-
-**Advantages**: does not require return forecasts and seeks true diversification.  
-**Disadvantages**: effectiveness is limited in highly correlated environments.
-
-### Optimizer Selection Decision Tree
+### 推荐工作流
 
 ```
-Do you have return forecasts?
-├── Yes → mean_variance (remember to add constraints)
-└── No → Do you need to account for correlation?
-    ├── Yes → risk_parity (recommended default)
-    └── No → Are volatility differences across assets large?
-        ├── Yes → equal_volatility
-        └── No → max_diversification
+get_market_data(codes=A股列表, ...)
+  → blend_black_litterman(...) 或 run_python 算目标权重
+  → 写出 signal.csv（日期 × 代码，值∈[-1,1] 或目标仓位约定）
+  → run_backtest(strategy="custom", signal_file=...)
+  → analyze_portfolio_risk(...) 解释风险贡献
+```
+
+### 方法选型（概念）
+
+```
+有收益观点？
+├── Yes → blend_black_litterman（或自算 MV，务必加权重约束）
+└── No → 需要相关结构？
+    ├── Yes → run_python 风险平价 / analyze_portfolio_risk 辅助
+    └── No → 逆波动等权（run_python 一行公式即可）
 ```
 
 ## Rebalancing Strategy
@@ -210,17 +132,15 @@ Do you have return forecasts?
 |---------|---------|------|
 | Equity portfolio | Monthly | ±5% |
 | Stock-bond mix | Quarterly | ±10% |
-| Global macro | Quarterly / semiannual | ±10% |
-| Cryptocurrency | Weekly / biweekly | ±15% (high volatility) |
+| Multi-asset (股债金) | Quarterly / semiannual | ±10% |
 
 ### Rebalancing in Backtests
 
-Implement rebalancing logic in `signal_engine.py`:
+在生成 `signal.csv` 的 `run_python` 脚本里做再平衡：
 
 ```python
-# Periodic rebalancing example (every 20 trading days)
+# 每 20 个交易日重算目标权重，写入各列信号
 if bar_count % rebalance_freq == 0:
-    # Recompute weights
     new_weights = calculate_target_weights(data_map)
     for code, weight in new_weights.items():
         signals[code].iloc[i] = weight
@@ -228,21 +148,19 @@ if bar_count % rebalance_freq == 0:
 
 ## Cross-Asset Correlation Analysis
 
-### Typical Correlation Matrix (China-Focused Portfolio Example)
+### Typical Correlation Matrix（A 股为主示例）
 
-| | CSI 300 | CSI 500 | Government Bonds | Gold | BTC |
-|--|--------|--------|------|------|-----|
-| CSI 300 | 1.00 | 0.85 | -0.15 | 0.05 | 0.10 |
-| CSI 500 | 0.85 | 1.00 | -0.10 | 0.03 | 0.12 |
-| Government Bonds | -0.15 | -0.10 | 1.00 | 0.20 | -0.05 |
-| Gold | 0.05 | 0.03 | 0.20 | 1.00 | 0.15 |
-| BTC | 0.10 | 0.12 | -0.05 | 0.15 | 1.00 |
+| | 沪深300 | 中证500 | 国债 | 黄金ETF |
+|--|--------|--------|------|---------|
+| 沪深300 | 1.00 | 0.85 | -0.15 | 0.05 |
+| 中证500 | 0.85 | 1.00 | -0.10 | 0.03 |
+| 国债 | -0.15 | -0.10 | 1.00 | 0.20 |
+| 黄金ETF | 0.05 | 0.03 | 0.20 | 1.00 |
 
 **Key patterns**:
-- Negative stock-bond correlation is the foundation of allocation (but it does not always hold; in 2022 both stocks and bonds sold off)
-- Gold has low correlation with equities and serves as a hedge
-- BTC's correlation with traditional assets is unstable and tends to become positive in crises
-- Large-cap versus small-cap China A-shares have high correlation (`0.85`), so diversification benefits are limited
+- 股债负相关是配置基础（并非永远成立，如 2022 股债双杀）
+- 黄金与权益相关性低，可作对冲
+- 大盘与小盘 A 股相关性高（约 0.85），分散收益有限
 
 ## Output Format
 
@@ -252,18 +170,14 @@ if bar_count % rebalance_freq == 0:
 ### Allocation Plan
 | Asset | Weight | Risk Contribution | Expected Return (Annualized) |
 |------|------|---------|--------------|
-| CSI 300 | 30% | 45% | 8% |
-| Government Bond ETF | 40% | 15% | 3% |
-| Gold | 15% | 20% | 5% |
-| BTC | 15% | 20% | 15% |
+| 沪深300ETF | 35% | 50% | 8% |
+| 中证500ETF | 15% | 25% | 9% |
+| 国债/信用债 ETF | 40% | 15% | 3% |
+| 黄金 ETF | 10% | 10% | 5% |
 
-### Optimizer Configuration
-```json
-{
-  "optimizer": "risk_parity",
-  "optimizer_params": {"lookback": 60}
-}
-```
+### 工具调用提示
+- 权重：`blend_black_litterman` 或自算后写入 signal.csv  
+- 风险：`analyze_portfolio_risk(codes=..., weights=..., start_date=..., end_date=...)`
 
 ### Expected Risk / Return
 | Metric | Value |
@@ -281,10 +195,10 @@ if bar_count % rebalance_freq == 0:
 
 ## Notes
 
-1. **The optimizer needs enough instruments**: at least 3 instruments are needed for meaningful optimization; with 2 instruments, `equal_volatility` is usually enough
-2. **`lookback` window**: too short (`<20`) is noisy, too long (`>120`) reacts slowly, and 60 is a reasonable default
-3. **`mean_variance` trap**: it is the easiest to overfit, and out-of-sample Sharpe is often cut by half or more
-4. **Rebalancing cost**: frequent rebalancing eats into returns; for China A-share portfolios, stamp duty of 0.05% plus commissions is material
-5. **Cross-market allocation**: use `"source": "auto"` in `config.json`, and let `codes` mix instruments from different markets
-6. **Leverage constraint**: the sum of weights must be ≤ 1.0, and leverage is not allowed unless explicitly specified
-7. **Survivorship bias**: historical correlations may be distorted by delistings and new listings
+1. **标的数量**：优化至少 3 只 A 股才有意义；2 只用逆波动即可  
+2. **lookback**：过短（&lt;20）噪、过长（&gt;120）钝，60 日较常用  
+3. **MV 陷阱**：最易过拟合；样本外 Sharpe 常腰斩——优先 BL 工具或强约束  
+4. **再平衡成本**：A 股印花税卖出 0.05% + 佣金，高频再平衡会吃掉收益——对照 `run_backtest` 的 `commission` / `stamp_duty`  
+5. **标的范围**：`run_backtest` 使用 A 股代码（`.SH` / `.SZ` / `.BJ`）  
+6. **杠杆**：权重和默认 ≤ 1.0，除非用户明确允许  
+7. **幸存者偏差**：历史相关会被退市/新上市扭曲

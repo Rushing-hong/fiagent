@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""龙虎榜 + 大宗交易 + 融资融券披露面研究示例。
+"""龙虎榜 + 大宗交易 + 融资融券披露面研究示例（A 股）。
 
-运行前提：在 agent/ 目录下执行（导入根为 agent/）。无需 token。
-所有请求经东方财富共享 IP 限速层节流（按源 IP 限流）。
+在仓库根目录执行：`python skills/eastmoney/scripts/disclosure_example.py`
+无需 token；请求经东方财富共享 IP 限速层节流。
 """
+
+from __future__ import annotations
 
 import json
 
-from src.tools.block_trades_tool import BlockTradesTool
-from src.tools.dragon_tiger_tool import DragonTigerTool
-from src.tools.margin_trading_tool import MarginTradingTool
+from tools.stock_disclosure import BlockTradesTool, DragonTigerTool, MarginTradingTool
 
 
 def dragon_tiger_seats(date: str, code: str) -> None:
     """打印指定个股在某交易日的龙虎榜买卖席位排名。"""
-    envelope = json.loads(DragonTigerTool().execute(date=date, code=code))
+    envelope = json.loads(DragonTigerTool().execute({"date": date, "code": code}, None))
     if not envelope.get("ok"):
         print(f"龙虎榜获取失败：{envelope.get('error')}")
         return
@@ -27,7 +27,7 @@ def dragon_tiger_seats(date: str, code: str) -> None:
 
 def recent_block_trades(code: str, days: int = 30) -> None:
     """打印近 N 日大宗交易的折溢价与买卖营业部。"""
-    envelope = json.loads(BlockTradesTool().execute(code=code, days=days))
+    envelope = json.loads(BlockTradesTool().execute({"code": code, "days": days}, None))
     if not envelope.get("ok"):
         print(f"大宗交易获取失败：{envelope.get('error')}")
         return
@@ -42,7 +42,7 @@ def recent_block_trades(code: str, days: int = 30) -> None:
 
 def margin_balance_trend(code: str, days: int = 30) -> None:
     """打印融资余额趋势（最新一日）。"""
-    envelope = json.loads(MarginTradingTool().execute(code=code, days=days))
+    envelope = json.loads(MarginTradingTool().execute({"code": code, "days": days}, None))
     if not envelope.get("ok"):
         print(f"融资融券获取失败：{envelope.get('error')}")
         return
@@ -56,8 +56,7 @@ def margin_balance_trend(code: str, days: int = 30) -> None:
 
 
 def main() -> None:
-    """主流程：三路披露面交叉验证机构动向。"""
-    print("===== Eastmoney 披露面研究（龙虎榜/大宗/两融） =====")
+    print("===== Eastmoney 披露面研究（龙虎榜/大宗/两融 · A 股）=====")
     code = "600519.SH"
     dragon_tiger_seats("2024-01-02", code)
     recent_block_trades(code, days=30)

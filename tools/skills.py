@@ -11,28 +11,37 @@ class LoadSkillTool(BaseTool):
     is_readonly = True
 
     def build_schema(self, ctx) -> dict:
-        catalog = ctx.skills.format_catalog_xml()
-        description = (
-            "加载 skill 的完整 SKILL.md 正文。执行领域任务前应先 load_skill。\n\n"
-            f"{catalog}"
-        )
+        # Skills 短索引已在 system prompt；此处不再嵌入全量 XML，避免每轮 schema 膨胀
+        names = [s.name for s in ctx.enabled_skills()]
+        name_prop: dict = {
+            "type": "string",
+            "description": "skill 名称（见 system 中 Skills 短索引）",
+        }
+        if names:
+            name_prop["enum"] = names
         return {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": description,
+                "description": (
+                    "加载 skill 的完整 SKILL.md 正文（与取数 tools 同级，按需选用）。"
+                    "决定使用某个 skill 时先调用本工具获取全文，再按全文执行；"
+                    "不要只凭短描述臆造该 skill 的流程。"
+                ),
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "skill 名称"},
-                    },
+                    "properties": {"name": name_prop},
                     "required": ["name"],
                 },
             },
         }
 
     def execute(self, args: dict, ctx) -> str:
+        from ui.prefs import is_skill_enabled
+
         name = args.get("name", "")
+        if name and not is_skill_enabled(name):
+            return f"skill `{name}` 已被用户禁用（Ctrl+P → 管理 Skills 可重新开启）"
         body = ctx.skills.load_body(name)
         if body.startswith("未找到"):
             return body

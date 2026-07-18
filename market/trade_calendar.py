@@ -46,6 +46,7 @@ def refresh_calendar_cache(*, force: bool = False) -> int:
     col = "trade_date" if "trade_date" in df.columns else df.columns[0]
     days = sorted({_to_ymd(x) for x in df[col].tolist() if x is not None})
     store.replace_trade_calendar(days)
+    invalidate_calendar_cache()
     return len(days)
 
 
@@ -66,11 +67,17 @@ def invalidate_calendar_cache() -> None:
 def is_trading_day(d: date | datetime | pd.Timestamp | str) -> bool:
     ymd = _to_ymd(d)
     try:
-        return ymd in _cached_set()
-    except Exception:
-        # fallback: weekdays
-        ts = pd.Timestamp(ymd)
-        return ts.weekday() < 5
+        cached = _cached_set()
+        if cached:
+            return ymd in cached
+    except Exception as exc:
+        logger.warning("trade calendar cache read failed: %s", exc)
+    # 无日历时退回工作日；含法定节假日，调用方应视为 degraded
+    logger.warning(
+        "trade calendar empty/unavailable; weekday fallback for %s (may include CN holidays)",
+        ymd,
+    )
+    return pd.Timestamp(ymd).weekday() < 5
 
 
 def trading_days(start: str, end: str) -> list[str]:
@@ -79,8 +86,13 @@ def trading_days(start: str, end: str) -> list[str]:
         days = [d for d in sorted(_cached_set()) if s <= d <= e]
         if days:
             return days
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("trade calendar range failed: %s", exc)
+    logger.warning(
+        "trade calendar empty for %s..%s; weekday fallback (includes CN holidays)",
+        s,
+        e,
+    )
     return [x.strftime("%Y-%m-%d") for x in pd.bdate_range(s, e)]
 
 

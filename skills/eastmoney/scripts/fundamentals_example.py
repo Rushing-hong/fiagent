@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""研报舆情 + 跨源财报基本面研究示例。
+"""研报舆情 + 财报基本面研究示例（A 股）。
 
-运行前提：在 agent/ 目录下执行（导入根为 agent/）。无需 token。
-研报走东方财富；财报由 get_financial_statements 按市场路由
-（美股 SEC EDGAR，A 股/港股东财），并经共享 per-host 限速层节流。
+在仓库根目录执行：`python skills/eastmoney/scripts/fundamentals_example.py`
+无需 token；研报走东财 + 同花顺一致预期；财报走东财 F10。
 """
+
+from __future__ import annotations
 
 import json
 
-from src.tools.financial_statements_tool import FinancialStatementsTool
-from src.tools.research_reports_tool import ResearchReportsTool
-from src.tools.shareholder_count_tool import ShareholderCountTool
+from tools.stock_disclosure import ShareholderCountTool
+from tools.stock_research import FinancialStatementsTool, ResearchReportsTool
 
 
 def broker_consensus(code: str, limit: int = 10) -> None:
     """打印券商研报评级分布与一致预期 EPS。"""
-    envelope = json.loads(ResearchReportsTool().execute(code=code, limit=limit))
+    envelope = json.loads(
+        ResearchReportsTool().execute({"code": code, "limit": limit}, None)
+    )
     if not envelope.get("ok"):
         print(f"研报获取失败：{envelope.get('error')}")
         return
@@ -26,24 +28,23 @@ def broker_consensus(code: str, limit: int = 10) -> None:
     print(f"  一致预期 EPS：{data.get('consensus_eps')}")
 
 
-def us_hk_indicators(code: str) -> None:
-    """打印美股/港股主要指标的最新报告期。"""
+def a_share_indicators(code: str) -> None:
+    """打印 A 股主要指标的最新报告期数。"""
     envelope = json.loads(
         FinancialStatementsTool().execute(
-            code=code, statement="indicators", period="annual"
+            {"code": code, "statement": "indicators", "period": "annual"}, None
         )
     )
     if not envelope.get("ok"):
         print(f"财报获取失败：{envelope.get('error')}")
         return
-    result = envelope["data"].get(code, {})
-    periods = result.get("periods", [])
-    print(f"{code} 主要指标报告期数：{len(periods)}（来源 {envelope['source']}）")
+    periods = envelope["data"].get("periods", [])
+    print(f"{code} 主要指标报告期数：{len(periods)}（来源 {envelope.get('source')}）")
 
 
 def holder_trend(code: str) -> None:
     """打印 A 股股东户数环比趋势（最新两期）。"""
-    envelope = json.loads(ShareholderCountTool().execute(code=code))
+    envelope = json.loads(ShareholderCountTool().execute({"code": code}, None))
     if not envelope.get("ok"):
         print(f"股东户数获取失败：{envelope.get('error')}")
         return
@@ -55,12 +56,11 @@ def holder_trend(code: str) -> None:
 
 
 def main() -> None:
-    """主流程：基本面 + 舆情交叉。"""
-    print("===== Eastmoney 基本面 + 研报研究 =====")
-    broker_consensus("600519.SH", limit=10)
-    holder_trend("600519.SH")
-    us_hk_indicators("AAPL.US")
-    us_hk_indicators("00700.HK")
+    print("===== Eastmoney 基本面 + 研报研究（A 股）=====")
+    code = "600519.SH"
+    broker_consensus(code, limit=10)
+    holder_trend(code)
+    a_share_indicators(code)
 
 
 if __name__ == "__main__":

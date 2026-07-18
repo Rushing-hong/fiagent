@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from market.eastmoney import get_json, resolve_secid
-from market.envelope import clamp_int, err
+from market.envelope import clamp_int, err, ok
 from tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -52,18 +51,22 @@ class FundFlowTool(BaseTool):
             return err("period 必须是 min 或 daily")
         days = clamp_int(args.get("days"), 30, 1, 250)
         results = {}
+        failed = 0
         for symbol in (c.strip() for c in codes):
-            results[symbol] = _fetch_symbol_flow(symbol, period=period, days=days)
-        return json.dumps(
-            {
-                "ok": True,
-                "market": "stock",
-                "source": "eastmoney",
-                "period": period,
-                "buckets": list(_BUCKETS),
-                "data": results,
-            },
-            ensure_ascii=False,
+            entry = _fetch_symbol_flow(symbol, period=period, days=days)
+            if "error" in entry:
+                failed += 1
+            results[symbol] = entry
+        quality = "partial" if failed else "normal"
+        note = f"{failed} symbol(s) failed" if failed else None
+        return ok(
+            results,
+            quality=quality,
+            note=note,
+            market="stock",
+            source="eastmoney",
+            period=period,
+            buckets=list(_BUCKETS),
         )
 
 
@@ -97,19 +100,15 @@ class NorthboundFlowTool(BaseTool):
             )
         except Exception as exc:
             return err(str(exc))
-        return json.dumps(
+        return ok(
             {
-                "ok": True,
-                "market": "China A",
-                "source": "eastmoney",
-                "data": {
-                    "unit": "10k CNY",
-                    "lookback_days": lookback,
-                    "realtime": _parse_realtime(realtime_payload),
-                    "history": _parse_history(history_payload, lookback),
-                },
+                "unit": "10k CNY",
+                "lookback_days": lookback,
+                "realtime": _parse_realtime(realtime_payload),
+                "history": _parse_history(history_payload, lookback),
             },
-            ensure_ascii=False,
+            market="China A",
+            source="eastmoney",
         )
 
 

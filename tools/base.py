@@ -4,9 +4,20 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
+# Schema 注入用：过长 description 浪费每轮 tokens；不改工具内部文案
+_TOOL_DESC_MAX = int(os.environ.get("FIAGENT_TOOL_DESC_MAX", "160"))
+
+
+def _clip_description(text: str, limit: int = _TOOL_DESC_MAX) -> str:
+    t = (text or "").strip()
+    if len(t) <= limit:
+        return t
+    return t[: max(0, limit - 1)].rstrip() + "…"
 
 
 class BaseTool(ABC):
@@ -28,12 +39,17 @@ class BaseTool(ABC):
 
     def to_openai_schema(self, ctx: Any = None) -> dict[str, Any]:
         if self.dynamic_schema:
-            return self.build_schema(ctx)
+            schema = self.build_schema(ctx)
+            fn = schema.get("function")
+            if isinstance(fn, dict) and "description" in fn:
+                fn = {**fn, "description": _clip_description(str(fn.get("description") or ""))}
+                return {**schema, "function": fn}
+            return schema
         return {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self.description,
+                "description": _clip_description(self.description),
                 "parameters": self.parameters or {
                     "type": "object",
                     "properties": {},

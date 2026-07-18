@@ -1,64 +1,40 @@
 ---
 name: akshare
 category: data-source
-description: AKShare financial data aggregator (18k+ stars). Free, no API key. Covers A-shares, US, HK, futures, macro, forex. Primary fallback for tushare and yfinance.
+description: AKShare A 股数据接入——get_market_data / screen_market / 分钟回测兜底；亦可 run_python 直接调库。
 ---
 
 ## Overview
 
-AKShare is a completely free, open-source Python financial data library. No registration or API key required. It aggregates data from public sources (Sina, East Money, etc.) covering Chinese and global markets.
+AKShare 免费开源金融数据库，聚合东财等公开源。
 
-- GitHub: https://github.com/akfamily/akshare (18k+ stars)
+- GitHub: https://github.com/akfamily/akshare
 - Install: `pip install akshare`
 
-## Quick Start
+## Quick Start（A 股）
 
 ```python
 import akshare as ak
 
-# A-share daily OHLCV (前复权)
-df = ak.stock_zh_a_hist(symbol="000001", period="daily",
-                         start_date="20240101", end_date="20260101", adjust="qfq")
-
-# US stock daily
-df = ak.stock_us_hist(symbol="105.AAPL", period="daily",
-                       start_date="20240101", end_date="20260101", adjust="qfq")
-
-# HK stock daily
-df = ak.stock_hk_hist(symbol="00700", period="daily",
-                       start_date="20240101", end_date="20260101", adjust="qfq")
+df = ak.stock_zh_a_hist(
+    symbol="000001", period="daily",
+    start_date="20240101", end_date="20260101", adjust="qfq",
+)
+spot = ak.stock_zh_a_spot_em()
 ```
 
-## Top 10 High-Frequency Interfaces
-
-### A-shares
+## 高频接口（A 股）
 
 | Function | Description | Key Params |
 |----------|-------------|------------|
-| `stock_zh_a_hist()` | A-share OHLCV | symbol, period, start_date, end_date, adjust |
-| `stock_zh_a_spot_em()` | Real-time A-share quotes | (none) |
-| `stock_individual_info_em()` | Stock basic info | symbol |
-| `stock_zh_a_hist_min_em()` | Intraday bars | symbol, period(1/5/15/30/60) |
+| `stock_zh_a_hist()` | A 股日/周/月 OHLCV | symbol, period, start_date, end_date, adjust |
+| `stock_zh_a_spot_em()` | 全市场实时行情 | （无） |
+| `stock_individual_info_em()` | 个股基本信息 | symbol |
+| `stock_zh_a_hist_min_em()` | 分钟 K | symbol, period(1/5/15/30/60) |
 
-### US / HK
-
-| Function | Description | Key Params |
-|----------|-------------|------------|
-| `stock_us_hist()` | US stock OHLCV | symbol (e.g. "105.AAPL"), period, start_date, end_date |
-| `stock_hk_hist()` | HK stock OHLCV | symbol (e.g. "00700"), period, start_date, end_date |
-
-### Macro / Forex / Futures
-
-| Function | Description |
-|----------|-------------|
-| `macro_china_gdp()` | China GDP data |
-| `macro_china_cpi()` | China CPI data |
-| `futures_main_sina()` | Futures main contract quotes |
-| `currency_boc_sina()` | BOC forex rates |
+宏观 / 期货等其它接口见官方文档；本产品内置链路聚焦上表。
 
 ## Column Names
-
-AKShare returns Chinese column names by default:
 
 | Chinese | English | Description |
 |---------|---------|-------------|
@@ -67,26 +43,24 @@ AKShare returns Chinese column names by default:
 | 最高 | high | High price |
 | 最低 | low | Low price |
 | 收盘 | close | Close price |
-| 成交量 | volume | Volume |
+| 成交量 | volume | Volume（手） |
 | 成交额 | amount | Turnover |
 | 涨跌幅 | pct_change | % change |
 | 换手率 | turnover_rate | Turnover rate |
 
-## Date Format
+## Date / Symbol
 
-- Input: `YYYYMMDD` string (e.g. `"20240101"`)
-- Output: `日期` column as string, convert with `pd.to_datetime()`
+- 日期入参：`YYYYMMDD` 字符串
+- A 股 symbol：纯数字 `"000001"`（无交易所后缀）
 
-## Symbol Format
+## 项目内接入
 
-- A-shares: pure digits `"000001"` (no .SZ suffix)
-- US stocks: `"105.AAPL"` (NASDAQ prefix 105), `"106.BABA"` (NYSE prefix 106)
-- HK stocks: `"00700"` (5-digit zero-padded)
+| 入口 | 路径 / 工具 | 说明 |
+|------|-------------|------|
+| 日线 OHLCV | `market/loaders.fetch_akshare` | `get_market_data(source="akshare"|"auto")` 链末级 |
+| 分钟线 | `fetch_akshare_minute` | `run_backtest(interval="1"|"5"|…)` |
+| 全市场排行 | `stock_zh_a_spot_em` | `screen_market` 东财失败时降级 |
 
-## Built-in Loader
+## Reference
 
-The project has a built-in AKShare DataLoader at `backtest/loaders/akshare_loader.py`. When backtesting, the runner automatically falls back to AKShare when tushare/yfinance are unavailable.
-
-## Reference Docs
-
-For less common interfaces, see the `references/` subdirectory or the official docs at https://akshare.akfamily.xyz/
+https://akshare.akfamily.xyz/

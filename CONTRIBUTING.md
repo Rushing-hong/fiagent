@@ -72,6 +72,7 @@ pytest tests/ -v
 
 - Python 3.10+，类型注解推荐
 - 工具返回值统一用 JSON（`market/envelope.py` 提供 `ok()` / `err()` 辅助函数）
+- 成功信封默认含 `quality`（normal/degraded/partial）、`as_of`；有 caveat 时写一行 `note`
 - 异常不直接暴露给用户，用 `err(f"xxx失败: {type(e).__name__}")`
 - 数据源请求用 `market/http.py` 的节流函数，避免 IP 被封
 

@@ -55,8 +55,9 @@ class FactorAnalysisTool(BaseTool):
         if factor_df.empty or return_df.empty:
             return json.dumps({"status": "error", "error": "数据为空"}, ensure_ascii=False)
 
-        # Single-period IC (original behavior)
-        ic_series = compute_ic_series(factor_df, return_df)
+        # 默认：因子日 T 对齐次日收益 T+1（避免同日 look-ahead）
+        fwd1 = _forward_return_panel(return_df, 1)
+        ic_series = compute_ic_series(factor_df, fwd1)
         if ic_series.empty:
             return json.dumps({"status": "error", "error": "IC 计算失败，共同样本不足"}, ensure_ascii=False)
         out_path.mkdir(parents=True, exist_ok=True)
@@ -70,13 +71,15 @@ class FactorAnalysisTool(BaseTool):
             "ir": round(ir, 4),
             "ic_positive_ratio": round(float((ic_series > 0).mean()), 4),
             "ic_count": len(ic_series),
+            "forward_days": 1,
+            "note": "IC/分层默认因子 T vs 收益 T+1",
         }
         (out_path / "ic_summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
         )
 
         # Group equity
-        equity_df = compute_group_equity(factor_df, return_df, n_groups)
+        equity_df = compute_group_equity(factor_df, fwd1, n_groups)
         if not equity_df.empty:
             equity_df.to_csv(out_path / "group_equity.csv")
             long_short = float(equity_df.iloc[-1, -1] - equity_df.iloc[-1, 0])
@@ -107,6 +110,15 @@ class FactorAnalysisTool(BaseTool):
         return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+def _forward_return_panel(return_df: pd.DataFrame, n: int) -> pd.DataFrame:
+    """At date T: cumulative return over trading days (T+1)..(T+n)."""
+    if n < 1:
+        raise ValueError("forward days must be >= 1")
+    # rolling(n) at index t+n = product of (t+1)..(t+n); shift(-n) labels result at t
+    cum = (1.0 + return_df).rolling(n).apply(lambda x: float(x.prod() - 1.0), raw=True)
+    return cum.shift(-n)
+
+
 def _compute_ic_decay(
     factor_df: pd.DataFrame,
     return_df: pd.DataFrame,
@@ -114,22 +126,11 @@ def _compute_ic_decay(
 ) -> list[dict]:
     """Compute IC at multiple forward horizons to assess factor decay.
 
-    For each forward period N, shifts the return DataFrame forward by N days
-    to compute "factor at T" vs "return from T to T+N".
-
-    Args:
-        factor_df: factor values (index=date, columns=codes)
-        return_df: daily return values (same structure)
-        periods: list of forward day counts, e.g. [1, 5, 10, 20, 60]
+    For each forward period N: factor at T vs cumulative return from T+1 to T+N.
     """
     results = []
     for n in periods:
-        # Shift returns forward: return at T+N = cumulative return over N days
-        if n == 1:
-            forward_return = return_df
-        else:
-            forward_return = (1 + return_df).rolling(n).apply(lambda x: x.prod() - 1, raw=True)
-
+        forward_return = _forward_return_panel(return_df, n)
         ic = compute_ic_series(factor_df, forward_return)
         if ic.empty:
             results.append({"forward_days": n, "ic_mean": None, "ic_std": None, "ir": None, "n_obs": 0})
@@ -160,7 +161,6 @@ def _compute_ic_decay(
     else:
         decay_verdict = "无有效 IC 或 IC 为负"
 
-    # Attach verdict
     for r in results:
         r["verdict"] = decay_verdict
 

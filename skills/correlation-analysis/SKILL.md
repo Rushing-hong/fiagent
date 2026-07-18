@@ -1,6 +1,6 @@
 ---
 name: correlation-analysis
-description: Correlation and cointegration analysis — co-movement discovery, deep return-correlation analysis, sector clustering, realized correlation, Engle-Granger / Johansen cointegration, half-life, Kalman dynamic hedge ratio, cross-market linkage analysis, and pair-trading signal generation
+description: Correlation and cointegration analysis for A-share names/sectors — co-movement, sector clustering, Engle-Granger / Johansen, half-life, Kalman hedge ratio, and pair-trading signals via get_market_data / run_python
 category: analysis
 ---
 
@@ -8,7 +8,7 @@ category: analysis
 
 ## Overview
 
-Correlation analysis is a foundational tool for pairs trading, portfolio construction, and risk management. This skill covers four analysis modes (co-movement discovery / return-correlation deep dive / sector clustering / realized correlation), a full cointegration-testing framework, cross-market linkage analysis, and the complete workflow from analytics to pair-trading signals.
+Correlation analysis is a foundational tool for pairs trading, portfolio construction, and risk management. This skill covers four analysis modes (co-movement discovery / return-correlation deep dive / sector clustering / realized correlation), a full cointegration-testing framework, and the workflow from analytics to A-share pair-trading signals. fiagent OHLCV tools are A-share only; load series with `get_market_data` then compute in `run_python`.
 
 ---
 
@@ -598,7 +598,9 @@ def kalman_hedge_ratio(
 
 ---
 
-## Cross-Market Correlation
+## A-Share Sector / Index Correlation
+
+> 外盘（港美/加密）联动仅作宏观背景时用 `web_search` / `read_url`；**不要**把非 A 股代码传给 `get_market_data`。
 
 ### Correlation Across China A-Share Sectors
 
@@ -624,34 +626,24 @@ ASHARE_SECTOR_PATTERNS = {
 }
 ```
 
-### Cross-Market Linkage Analysis
+### Index / Sector Lead-Lag (A-share)
 
 ```python
-def cross_market_correlation(
-    markets: dict,  # {"China A-shares": series, "Hong Kong": series, "crypto": series, "US": series}
+def ashare_series_correlation(
+    series: dict,  # {"沪深300": ret, "中证500": ret, "白酒板块": ret, ...}
     rolling_window: int = 60,
     lag_days: list = [0, 1, 2, 3],
 ) -> dict:
-    """Cross-market correlation plus lead-lag analysis.
+    """A-share index/sector correlation plus lead-lag.
 
-    Args:
-        markets: Daily return series for each market
-        rolling_window: Rolling window
-        lag_days: List of lags to test
-
-    Returns:
-        Correlation matrix, lead-lag analysis, and rolling correlation
+    Build series from get_market_data on index/ETF/stock codes, then pct_change.
     """
-    df = pd.DataFrame(markets).dropna()
-
-    # Static correlation matrix
+    df = pd.DataFrame(series).dropna()
     static_corr = df.corr()
-
-    # Lead-lag correlation to detect cross-market transmission
     lead_lag = {}
-    mkt_names = list(markets.keys())
-    for i, m1 in enumerate(mkt_names):
-        for m2 in mkt_names[i + 1:]:
+    names = list(series.keys())
+    for i, m1 in enumerate(names):
+        for m2 in names[i + 1:]:
             pair_key = f"{m1}_{m2}"
             lead_lag[pair_key] = {}
             for lag in lag_days:
@@ -660,14 +652,11 @@ def cross_market_correlation(
                 else:
                     r, _ = pearsonr(df[m1].iloc[lag:], df[m2].iloc[:-lag])
                 lead_lag[pair_key][f"lag_{lag}d"] = round(r, 4)
-
-    # Rolling correlation
     rolling_corrs = {}
-    for i, m1 in enumerate(mkt_names):
-        for m2 in mkt_names[i + 1:]:
+    for i, m1 in enumerate(names):
+        for m2 in names[i + 1:]:
             key = f"{m1}_{m2}"
             rolling_corrs[key] = df[m1].rolling(rolling_window).corr(df[m2])
-
     return {
         "static_corr": static_corr,
         "lead_lag": pd.DataFrame(lead_lag).T,
@@ -675,61 +664,18 @@ def cross_market_correlation(
     }
 ```
 
-### Empirical Cross-Market Linkage Patterns
+### Typical A-Share Linkage Notes (qualitative)
 
-| Market Pair | Average Correlation | Transmission Direction | Lag |
-|-------|---------|---------|------|
-| China A-shares ↔ Hong Kong | 0.5-0.7 | Two-way, Hong Kong slightly leads | 0-1 day |
-| China A-shares ↔ U.S. equities | 0.2-0.4 | U.S. leads overnight | 1 day |
-| BTC ↔ ETH | 0.7-0.9 | Highly synchronous | < 1 hour |
-| China A-shares ↔ BTC | 0.0-0.2 | Mostly independent, except correlation spikes in crises | Unstable |
-| U.S. equities ↔ BTC | 0.1-0.4 | U.S. leads through institutional capital flows | Within 1 day |
-| RMB exchange rate ↔ China A-shares | -0.2 - 0.3 | RMB weakness → foreign outflows → China A-share weakness | 0-2 days |
+| Pair | Typical corr | Notes |
+|------|--------------|-------|
+| 沪深300 ↔ 中证500 | 0.7–0.9 | Risk-on/off moves together; beta differs |
+| 银行 ↔ 保险 | 0.6–0.8 | Rate / macro sensitive |
+| 白酒龙头对 | 0.7–0.9 | Common pair-trading pool |
+| 北向情绪 ↔ 大盘 | unstable | Use hk-connect-flow / fund-flow tools |
 
-### Impact of FX Factors on Cross-Market Correlation
+### QDII / FX note (optional, external)
 
-Cross-market correlation analysis must distinguish between local-currency returns and FX-adjusted returns. Otherwise, exchange-rate moves can create spurious correlation or hide the true one.
-
-```python
-def fx_adjusted_correlation(
-    foreign_price: pd.Series,   # foreign-market price, denominated in foreign currency
-    domestic_price: pd.Series,  # domestic-market price
-    fx_rate: pd.Series,         # foreign currency / domestic currency, e.g. USD/CNY
-) -> dict:
-    """Cross-market correlation adjusted for FX effects.
-
-    Args:
-        foreign_price: Foreign-market price series in foreign currency
-        domestic_price: Domestic-market price series in domestic currency
-        fx_rate: FX series expressed as foreign / domestic
-
-    Returns:
-        Raw correlation vs FX-adjusted correlation
-    """
-    # Domestic-currency foreign return = foreign return + FX return
-    foreign_ret = foreign_price.pct_change()
-    fx_ret = fx_rate.pct_change()
-    foreign_ret_cny = (1 + foreign_ret) * (1 + fx_ret) - 1
-
-    domestic_ret = domestic_price.pct_change()
-
-    df = pd.concat([foreign_ret.rename("foreign_raw"),
-                    foreign_ret_cny.rename("foreign_domestic"),
-                    domestic_ret.rename("domestic"),
-                    fx_ret.rename("fx")], axis=1).dropna()
-
-    raw_corr, _ = pearsonr(df["foreign_raw"], df["domestic"])
-    adj_corr, _ = pearsonr(df["foreign_domestic"], df["domestic"])
-    fx_corr, _ = pearsonr(df["fx"], df["domestic"])
-
-    return {
-        "raw_corr_foreign_domestic": round(raw_corr, 4),
-        "fx_adjusted_corr": round(adj_corr, 4),
-        "fx_domestic_corr": round(fx_corr, 4),
-        "fx_contribution": round(adj_corr - raw_corr, 4),
-        "note": "fx_contribution > 0 means FX amplified cross-market correlation",
-    }
-```
+If approximating overseas exposure via A-share QDII ETFs, prices already trade onshore — do not pass `.HK` / `.US` / `BTC-USDT` to fiagent market tools. FX decomposition only when you already have external series in `run_python`.
 
 ### Correlation Breakdown During Crises
 

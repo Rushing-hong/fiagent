@@ -4,7 +4,7 @@ description: 基于缠论（缠中说禅）的形态识别引擎，使用czsc库
 category: strategy
 ---
 
-> ⚠️ **工具状态**：本 skill 依赖 `czsc` 第三方库（`pip install czsc`）进行缠论形态识别，fiagent 当前无内置 chanlun 工具。Agent 可用 `get_market_data` 获取 OHLCV 数据，再使用 `write` 工具编写调用 czsc 的 Python 脚本手动分析。
+> 🔧 **用法**：`get_market_data` 取 OHLCV → `pip install czsc` → `write` / `run_python` 调用 czsc 做缠论形态识别。
 
 # 缠论形态识别
 
@@ -48,9 +48,9 @@ from datetime import datetime
 
 # 准备 RawBar 列表（需按时间正序排列）
 bars = [
-    RawBar(symbol="BTC-USDT", id=0, dt=datetime(2026,1,1),
-           freq=Freq.D, open=70000, close=71000,
-           high=72000, low=69000, vol=1000, amount=71000000),
+    RawBar(symbol="600519.SH", id=0, dt=datetime(2026,1,1),
+           freq=Freq.D, open=1700, close=1710,
+           high=1720, low=1690, vol=1000, amount=1710000),
     # ... 更多K线
 ]
 

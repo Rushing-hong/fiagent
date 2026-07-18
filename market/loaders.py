@@ -35,7 +35,12 @@ def fetch_mootdx(code: str, start_date: str, end_date: str) -> list[dict[str, An
         return []
 
     bare = code.split(".")[0]
-    if code.upper().endswith(".BJ") or (len(bare) == 6 and bare[0] in ("4", "8")):
+    upper = code.upper()
+    if (
+        upper.endswith(".BJ")
+        or (len(bare) == 6 and bare[0] in ("4", "8"))
+        or bare.startswith("92")
+    ):
         return []
 
     try:
@@ -66,6 +71,9 @@ def fetch_baostock(code: str, start_date: str, end_date: str) -> list[dict[str, 
     parts = code.upper().split(".")
     sym = parts[0]
     suffix = parts[1] if len(parts) > 1 else "SH"
+    # baostock 无北交所；勿把 .BJ 误映射为 sz.
+    if suffix == "BJ" or sym.startswith(("4", "8", "92")):
+        return []
     bs_code = f"sh.{sym}" if suffix == "SH" else f"sz.{sym}"
     lg = bs.login()
     if lg.error_code != "0":

@@ -10,6 +10,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from market.eastmoney import KLT_BY_INTERVAL, fetch_kline, resolve_secid
+from market.envelope import now_as_of, ok, worse_quality
 from market.loaders import fetch_akshare, fetch_baostock, fetch_mootdx
 
 logger = logging.getLogger(__name__)
@@ -28,10 +29,20 @@ _FETCHERS = {
 }
 
 
+def is_a_share_symbol(code: str) -> bool:
+    return bool(_A_SHARE_RE.match(str(code).strip().upper()))
+
+
 def detect_source(code: str) -> str:
-    if _A_SHARE_RE.match(code):
+    if is_a_share_symbol(code):
         return "tencent"
-    return "eastmoney"
+    return "none"
+
+
+def _preferred_source(code: str, source: str) -> str:
+    if source == "auto":
+        return _A_SHARE_CHAIN[0] if is_a_share_symbol(code) else "none"
+    return source
 
 
 def cap_rows(records: list, max_rows: int) -> list | dict[str, object]:
@@ -128,8 +139,12 @@ def fetch_one(
     source: str = "auto",
     interval: str = "1D",
 ) -> tuple[list[dict[str, Any]], str]:
+    code = str(code).strip().upper()
+    if not is_a_share_symbol(code):
+        return [], "rejected_non_a_share"
+
     if source == "auto":
-        chain = list(_A_SHARE_CHAIN) if _A_SHARE_RE.match(code.upper()) else ["eastmoney", "tencent"]
+        chain = list(_A_SHARE_CHAIN)
     elif source in _FETCHERS:
         chain = [source]
     else:
@@ -162,23 +177,79 @@ def fetch_market_data(
     results: dict[str, Any] = {}
     for code in codes:
         code = code.strip().upper()
+        preferred = _preferred_source(code, source)
         rows, used_source = fetch_one(
             code, start_date, end_date, source=source, interval=interval
         )
         if not rows:
-            results[code] = {"error": "no data", "source_tried": used_source}
+            if used_source == "rejected_non_a_share":
+                results[code] = {
+                    "error": "A-share only (expect ######.SH|SZ|BJ)",
+                    "source_tried": used_source,
+                    "quality": "partial",
+                }
+            else:
+                results[code] = {
+                    "error": "no data",
+                    "source_tried": used_source,
+                    "quality": "partial",
+                }
             continue
+
+        quality = "normal"
+        notes: list[str] = []
+        if used_source != preferred:
+            quality = "degraded"
+            notes.append(f"fallback from {preferred} → {used_source}")
+
         capped = cap_rows(rows, max_rows)
         if isinstance(capped, dict):
-            results[code] = {"source": used_source, **capped}
+            quality = worse_quality(quality, "degraded")  # type: ignore[arg-type]
+            notes.append(f"truncated {capped['rows']}→{capped['returned']}")
+            entry: dict[str, Any] = {
+                "source": used_source,
+                "quality": quality,
+                **capped,
+            }
         else:
-            results[code] = {"source": used_source, "data": capped}
+            entry = {"source": used_source, "quality": quality, "data": capped}
+        if notes:
+            entry["note"] = "; ".join(notes)
+        results[code] = entry
     return results
 
 
 def fetch_market_data_json(**kwargs: Any) -> str:
     data = fetch_market_data(**kwargs)
-    return json.dumps(
-        {"ok": True, "market": "stock", "source": "multi", "data": data},
-        ensure_ascii=False,
+    qualities = [
+        v.get("quality", "normal")
+        for v in data.values()
+        if isinstance(v, dict)
+    ]
+    overall: str = "normal"
+    notes: list[str] = []
+    for q in qualities:
+        overall = worse_quality(overall, q)  # type: ignore[arg-type]
+    failed = sum(1 for v in data.values() if isinstance(v, dict) and "error" in v)
+    truncated = sum(
+        1 for v in data.values() if isinstance(v, dict) and v.get("truncated")
+    )
+    fallbacks = sum(
+        1
+        for v in data.values()
+        if isinstance(v, dict) and "fallback" in str(v.get("note", ""))
+    )
+    if failed:
+        notes.append(f"{failed} symbol(s) failed")
+    if truncated:
+        notes.append(f"{truncated} symbol(s) truncated")
+    if fallbacks:
+        notes.append(f"{fallbacks} symbol(s) used fallback source")
+    return ok(
+        data,
+        quality=overall,  # type: ignore[arg-type]
+        as_of=now_as_of(),
+        note="; ".join(notes) if notes else None,
+        market="stock",
+        source="multi",
     )

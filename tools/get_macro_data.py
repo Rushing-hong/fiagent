@@ -164,7 +164,7 @@ class GetMacroDataTool(BaseTool):
         },
         "required": ["indicator"],
     }
-    is_readonly = True
+    is_readonly = False  # 默认 persist 写 research.db，不可进并行只读池
     repeatable = True
 
     def execute(self, args: dict, ctx) -> str:

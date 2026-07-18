@@ -180,7 +180,7 @@ signal.to_csv("signal.csv")
 
 ## 五、缠论（进阶）
 
-缠中说禅理论是国内技术分析的"天花板"。fiagent 无内置缠论 tool，但可用 `get_market_data` 获取 OHLCV + `czsc` 库（`pip install czsc`）手动分析：
+缠中说禅分析：`get_market_data` 取 OHLCV + `czsc`（`pip install czsc`），详见 `chanlun` skill：
 
 ```python
 from czsc import CZSC, RawBar, Freq

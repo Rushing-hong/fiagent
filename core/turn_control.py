@@ -63,6 +63,9 @@ class TurnController:
 
     def request_abort(self) -> None:
         self._abort.set()
+
+    def is_aborted(self) -> bool:
+        return self._abort.is_set()
         self._paused.set()
         self._pause_pending.clear()
 

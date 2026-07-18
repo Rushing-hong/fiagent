@@ -4,7 +4,7 @@
 
 ## 作用
 
-领域知识库：每个子目录一份 `SKILL.md`，描述何时用、怎么用相关工具与流程（自 **Vibe-Trading** 迁移）。
+领域知识库：每个子目录一份 `SKILL.md`，描述何时用、怎么用相关工具与流程。
 
 ## 注册
 
@@ -15,9 +15,9 @@
 约 55+ 技能，涵盖：
 
 - 数据源：`eastmoney`、`tushare`、`akshare`、`mootdx`、`data-routing`
-- 分析：`technical-basic`、`minute-analysis`、`factor-research`、`risk-analysis` …
+- 分析：`technical-analysis`、`minute-analysis`、`factor-research`、`risk-analysis` …
 - 策略：`strategy-generate`、`backtest-diagnose`、`pair-trading` …
-- 其他：`report-generate`、`regulatory-knowledge`、`vnpy-export` …
+- 其他：`report-generate`、`regulatory-knowledge`、`trade-journal` …
 
 ## 目录约定
 
@@ -26,7 +26,6 @@ skills/<name>/
   SKILL.md          # 必需
   scripts/          # 可选示例脚本
   references/       # 可选参考文档
-  example_signal_engine.py  # 部分策略技能
 ```
 
-单个 skill 不再单独建 md；详见各目录内 `SKILL.md`。
+详见各目录内 `SKILL.md`。

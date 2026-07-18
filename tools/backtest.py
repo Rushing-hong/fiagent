@@ -48,18 +48,9 @@ class RunBacktestTool(BaseTool):
     name = "run_backtest"
     summary = "A股策略回测（支持内置策略+自定义信号）"
     description = (
-        "对 A 股历史数据执行策略回测，输出绩效指标、交易明细和净值曲线。\n\n"
-        "使用流程:\n"
-        "1. 先用 get_market_data 获取 OHLCV 数据\n"
-        "2. 选择内置策略或传入自定义信号文件路径\n"
-        "3. 调用 run_backtest 执行回测\n"
-        "4. 解读返回的 metrics (年化收益/夏普/最大回撤/胜率等)\n\n"
-        "内置策略:\n"
-        f"{chr(10).join(f'  - {k}: {v.__doc__.split(chr(10))[0] if v.__doc__ else k}' for k, v in _BUILTIN_STRATEGIES.items())}\n\n"
-        "市场规则自动执行: T+1 交割、涨跌停锁仓拒单(默认)、信号延迟次日开盘成交(默认 signal_lag=1)、"
-        "√冲击成本、印花税(卖0.05%)、佣金(0.03%)、过户费、最小100股。"
-        "A股不做空。已支持: 期货对冲、行业/风格帽、sleeve、BL工具、事件信号、分钟K(interval=5等，近端历史)。"
-        "尚不支持: 全市场点位成分仿真、完整 Barra 协方差。"
+        "A股策略回测：绩效/成交/净值；含 Layer1·2 与 risk 归因。"
+        "默认 T+1、涨跌停拒单、signal_lag=1 次日开盘；支持 custom 信号与 universe_asof。"
+        "策略见 strategy 枚举；细节见参数说明。"
     )
     parameters = {
         "type": "object",
@@ -232,9 +223,10 @@ class RunBacktestTool(BaseTool):
         strategy = str(args.get("strategy", "ma_cross"))
         is_custom = strategy == "custom"
 
-        # Fetch data
+        # Fetch data（单票失败跳过，不全盘中止）
         interval = str(args.get("interval") or "1d")
         data: dict[str, pd.DataFrame] = {}
+        fetch_errors: list[str] = []
         for code in codes:
             try:
                 if interval != "1d":
@@ -249,7 +241,8 @@ class RunBacktestTool(BaseTool):
                 else:
                     rows, source = fetch_one(code, start_date, end_date)
                 if not rows:
-                    return _err(f"未获取到 {code} 的行情数据 ({interval})")
+                    fetch_errors.append(f"{code}: no data ({interval}/{source})")
+                    continue
                 df = pd.DataFrame(rows)
                 df["trade_date"] = pd.to_datetime(df["trade_date"])
                 df = df.set_index("trade_date").sort_index()
@@ -258,10 +251,11 @@ class RunBacktestTool(BaseTool):
                     df = df.iloc[-3000:]
                 data[code] = df
             except Exception as e:
-                return _err(f"获取 {code} 数据失败: {e}")
+                fetch_errors.append(f"{code}: {e}")
 
         if not data:
-            return _err("未获取到任何行情数据")
+            detail = "; ".join(fetch_errors[:8]) if fetch_errors else "empty codes"
+            return _err(f"未获取到任何行情数据 ({detail})")
 
         # Week4 Layer2：默认拉沪深300 / 中证500 日收益作 β 基准
         benchmark_returns: dict[str, Any] = {}
@@ -278,18 +272,15 @@ class RunBacktestTool(BaseTool):
                 except Exception:
                     continue
 
-        # Minute: T+1 lock + overnight cash interest are ill-defined per bar
+        # Minute: cash interest ill-defined per bar; T+1 按交易日 normalize（引擎内已修）
         if interval != "1d":
             args = dict(args)
-            if "cash_annual_rate" not in args:
-                args["cash_annual_rate"] = 0.0
-            # after_hours True relaxes same-bar sell for intraday demos
-            if "after_hours" not in args:
-                args["after_hours"] = True
+            args["cash_annual_rate"] = 0.0
             if "signal_lag" not in args:
                 args["signal_lag"] = 1
-            # disable cash interest on sub-daily to avoid over-accrual
-            args["cash_annual_rate"] = 0.0
+            # after_hours 仅表示用收盘价成交，不绕过 T+1；默认 False 避免误解
+            if "after_hours" not in args:
+                args["after_hours"] = False
         # Load custom signal / sleeves
         signal_df = None
         sleeves = None
@@ -387,6 +378,13 @@ class RunBacktestTool(BaseTool):
 
         if not result.get("ok"):
             return _err(result.get("error", "回测失败"))
+
+        if fetch_errors:
+            result["skipped_symbols"] = fetch_errors
+            note = result.get("note") or ""
+            skip_note = f"skipped {len(fetch_errors)} symbol(s) with no data"
+            result["note"] = f"{note}; {skip_note}".strip("; ")
+            result["quality"] = "degraded"
 
         return json.dumps(result, ensure_ascii=False, default=str)
 

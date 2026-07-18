@@ -83,17 +83,17 @@ class AnalyzeDragonTigerTool(BaseTool):
             # stock-level hot_money net signal for persist
             hot_net = float(by_type.get("hot_money", {}).get("net") or 0.0)
             inst_net = float(by_type.get("institution", {}).get("net") or 0.0)
+            meta_note: str | None = None
 
             if bool(args.get("persist", True)):
+                from market.a_share_code import to_a_share_symbol
                 from market.research_store import get_store
                 rows = []
                 target_code = code or "_MARKET_"
+                sym = to_a_share_symbol(code) if code else target_code
                 rows.append({
                     "asof": trade_date,
-                    "code": target_code if not code else (
-                        f"{code}.SH" if code.startswith(("5", "6", "9")) else
-                        f"{code}.BJ" if code.startswith(("4", "8")) else f"{code}.SZ"
-                    ),
+                    "code": sym,
                     "signal_id": "dt_hot_money_net",
                     "value": hot_net,
                     "unit": "CNY_yuan",
@@ -101,13 +101,16 @@ class AnalyzeDragonTigerTool(BaseTool):
                 })
                 rows.append({
                     "asof": trade_date,
-                    "code": rows[0]["code"],
+                    "code": sym,
                     "signal_id": "dt_institution_net",
                     "value": inst_net,
                     "unit": "CNY_yuan",
                     "meta_json": {"seat_agg": by_type},
                 })
-                get_store().upsert_micro_signals(rows)
+                try:
+                    get_store().upsert_micro_signals(rows)
+                except Exception as exc:
+                    meta_note = f"persist_failed: {exc}"
 
             meta = normalize_meta(
                 source="eastmoney+heuristic",
@@ -116,6 +119,9 @@ class AnalyzeDragonTigerTool(BaseTool):
                 unit="CNY_yuan",
                 stale=False,
             )
+            note = "席位分类为启发式规则库 v0，非官方标签；quality=degraded"
+            if meta_note:
+                note = f"{note}；{meta_note}"
             return ok(
                 {
                     "date": trade_date,
@@ -128,11 +134,12 @@ class AnalyzeDragonTigerTool(BaseTool):
                         "hot_money_net": hot_net,
                         "institution_net": inst_net,
                     },
-                    "note": "席位分类为启发式规则库 v0，非官方标签；quality=degraded",
+                    "note": note,
                 },
                 quality="degraded",
                 market="a_share",
                 tool="analyze_dragon_tiger",
+                note=note,
                 _meta=meta,
             )
         except Exception as exc:

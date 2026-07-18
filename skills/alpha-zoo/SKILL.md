@@ -10,7 +10,7 @@ category: research
 
 ## Purpose
 
-When the user asks about prebuilt cross-sectional alphas — Kakushadze 101, GTJA 191, Qlib 158, Fama-French / Carhart — or wants to bench a whole zoo on an investable universe (CSI 300, S&P 500, BTC-USDT, ...), this skill orients you. The zoo is the curated library; the bench is the evaluator.
+When the user asks about prebuilt cross-sectional alphas — Kakushadze 101, GTJA 191, Qlib 158, Fama-French / Carhart — or wants to bench a whole zoo on an investable A-share universe (CSI 300 / CSI 500, ...), this skill orients you. The zoo is the curated library; the bench is the evaluator. fiagent runtime tools remain A-share only.
 
 ## Tools Available
 

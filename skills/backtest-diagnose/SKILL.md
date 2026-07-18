@@ -1,89 +1,58 @@
 ---
 name: backtest-diagnose
-description: Diagnose failed or underperforming backtests, locate the root cause, and fix the issue
+description: 诊断 A 股 run_backtest 失败或表现异常：读工具返回 / 信号 CSV，定位根因并重跑验证。
 category: tool
 ---
 
-# Backtest Diagnosis
+# 回测诊断（A 股）
 
-## Overview
+用户反馈回测失败、报错或结果异常时使用本技能。
 
-Use this skill when a user reports that a backtest failed, raised an error, or produced poor results.
+工作流：`get_market_data` →（可选自定义 `signal_file`）→ `run_backtest`。
 
-## Diagnostic Workflow
+## 诊断流程
 
-1. **Read existing artifacts**: use `read_file` to inspect `artifacts/metrics.csv`, `equity.csv`, and `trades.csv`
-2. **Read the code**: use `read_file` to inspect `code/signal_engine.py` and `config.json`
-3. **Classify the issue**: determine the root cause using the error taxonomy below
-4. **Apply the fix**: use `edit_file` to modify the code, then rerun the backtest
-5. **Verify the fix**: use `read_file` to inspect the new `metrics.csv`
+1. **读工具返回**：上一轮 `run_backtest` / `get_market_data` 的 JSON 信封（`ok` / `error` / `data.metrics` / `data.trades`）
+2. **若 strategy=custom**：用 `read` 检查 `signal_file` CSV（index=日期，columns=代码，values∈[-1,1]）
+3. **归类问题**（见下表）
+4. **修复**：`edit` 改信号脚本或调整 `run_backtest` 参数；勿无关大改策略逻辑
+5. **重跑**：再调一次 `run_backtest`，对照 metrics / trade_count
 
-## Error Taxonomy
+## 错误分类
 
-### Runtime Errors (`exit_code != 0`)
+### 工具直接失败（`ok: false`）
 
-| Error Type | Common Cause | Fix |
-|---------|---------|---------|
-| ImportError | Missing dependency | `bash("pip install xxx")` |
-| KeyError | DataFrame column-name mismatch | Check the actual column names in `data_map` |
-| IndexError | Empty data or insufficient length | Add length checks |
-| TypeError | Incorrect signal type | Ensure the return value is `pd.Series` |
+| 症状 | 常见原因 | 处理 |
+|------|----------|------|
+| 未获取到行情 | 代码非 `.SH/.SZ/.BJ`、日期无交易日、源全挂 | 核对代码；换 `source`；收窄区间重试 |
+| 需要 codes 或 universe_asof | 入参缺失 | 补 `codes` 或先 `build_tradable_universe` |
+| custom 缺 signal_file | 未传路径或文件缺失 | 补齐 CSV 路径 |
+| 信号列对不上 | CSV 列名 ≠ codes | 对齐列名与代码后缀 |
 
-### Logic Bugs (Backtest Succeeds but Results Are Abnormal)
+### 跑通但结果异常
 
-1. **Zero trades** (`trade_count=0`): signal-logic bug. Conditions are too strict, so the signal stays at 0. Check whether entry and exit logic is reasonable, and inspect the signal series to confirm it is not all zeros.
-2. **Late trades** (first trade occurs more than 2 years after the backtest start): data-filtering bug. The lookback window may be too long, or the initial data segment may have been dropped. Shorten the window or check whether `dropna` is too aggressive.
-3. **Capital utilization < 50%** (mostly in cash): position-sizing bug. Signal triggers may be too sparse, or the position-sizing logic may be wrong.
-4. **Open position at the end** (a position still exists when the backtest ends): exit-timing bug. Forced liquidation may be missing, or exit logic does not cover the final segment.
+1. **零成交**（`trade_count=0`）：信号过严或全 0；检查 CSV / 内置参数（RSI 阈值、均线周期）
+2. **很晚才第一笔**：回看窗口过长或 `dropna` 过猛；缩短 `strategy_params` 窗口
+3. **长期空仓**：信号稀疏或仓位逻辑过紧
+4. **期末仍持仓**：自定义信号缺少平仓；可接受时在报告中说明强制清算行为
 
-### Data Errors
+### 数据侧
 
-| Symptom | Root Cause | Fix |
-|------|------|---------|
-| No data fetched | Invalid API token or code issue | Check `config.json` |
-| Too little data | Date range too narrow | Expand the date range |
+若错误含 `rate limit` / `API limit` / `daily limit` / 源「无数据」：换 `get_market_data` 的 `source`，或等待限流恢复。
 
-### Data-Source Error Ignore List
+## 硬门禁（修复后须满足）
 
-If you encounter the following keywords, **do not modify the code**. The problem is on the data-provider side:
-- a provider-side "no data available" response
-- `rate limit`
-- `API limit`
-- `daily limit`
-- `Information` (common in Tushare API responses)
+1. `run_backtest` 返回 `ok: true`
+2. `trade_count > 0`（除非用户明确要空仓基准）
+3. metrics 中收益/回撤无异常 `NaN`（若字段存在）
+4. 修复迭代 ≤ 3 次；每次只改一类问题后立即重跑
 
-These issues require the user to check the API token, switch data sources, or wait for the quota to reset.
+## 执行假设相关参数
 
-## Hard-Gate Checklist
+诊断「过度乐观」时检查：`commission`、`stamp_duty`、`signal_lag`、`exec_price`、`use_impact_model`、`impact_coef`、`reject_limit_lock`、`skip_halted`。详见 `execution-model`。
 
-1. `artifacts/metrics.csv` exists and is non-empty
-2. `artifacts/equity.csv` exists and is non-empty
-3. `trade_count > 0` (`0` trades means a signal bug)
-4. The equity series contains no `NaN`
-5. `exit_code == 0`
+## `action_items` 写法
 
-## Fixing Principles
-
-- Use **edit_file** to make precise code fixes instead of rewriting the entire file with `write_file`, unless the structure is fundamentally broken
-- Fix the bug only, do not change strategy logic unless the user explicitly asks
-- Fix one issue at a time, and rerun the backtest immediately after each fix
-- Limit yourself to at most 3 repair iterations
-
-## Post-Fix Validation Rules
-
-After modifying `signal_engine.py`, you must confirm:
-1. **AST syntax passes**: `bash("python -c \"import ast; ast.parse(open('code/signal_engine.py').read()); print('OK')\"")`
-2. **Contains `class SignalEngine`**: the file must define `class SignalEngine`
-3. **Contains `def generate`**: the class must contain a `def generate` method
-4. **Rerun the backtest**: after the fix, rerun the backtest and verify the results
-
-## `action_items` Writing Rules
-
-After diagnosis, output actionable improvement suggestions:
-- Format: `"Change X from A to B"` or `"Add X logic in signal_engine.py"`
-- Be specific about parameter values, filenames, and function names
-- Provide at least 2 items
-- Examples:
-  - `"Change RSI threshold from 30 to 25 in signal_engine.py line 42"`
-  - `"Add signals = signals.fillna(0) after signal calculation to prevent NaN propagation"`
-  - `"Add a volume filter: skip buy signals when volume is below the 20-day average"`
+- 具体到参数名与取值：`"把 rsi oversold 从 30 改为 25 后重跑 run_backtest"`
+- 自定义信号：`"在 signal.csv 生成脚本里对信号 fillna(0)，并保证列名含 600519.SH"`
+- 至少给出 2 条可执行项

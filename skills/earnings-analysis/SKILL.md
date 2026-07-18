@@ -1,6 +1,6 @@
 ---
 name: earnings-analysis
-description: 盈利预测与分析师修正分析——自上而下/自下而上预测法、SUE/PEAD 超预期交易、分析师修正动量、业绩预告信号提取。覆盖 A 股/US/HK 三市场。
+description: 盈利预测与分析师修正分析——自上而下/自下而上预测法、SUE/PEAD 超预期交易、分析师修正动量、业绩预告信号提取。工具与流程面向 A 股。
 category: analysis
 ---
 

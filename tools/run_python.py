@@ -45,8 +45,9 @@ class RunPythonTool(BaseTool):
         },
         "required": ["file"],
     }
-    is_readonly = True
-    repeatable = True
+    # 任意脚本可能写盘/联网/改 DB，不可与只读工具并行
+    is_readonly = False
+    repeatable = False
 
     def execute(self, args: dict[str, Any], ctx: Any) -> str:
         try:

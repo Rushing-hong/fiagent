@@ -152,10 +152,7 @@ R_p - R_f = α + β × (R_m - R_f) + γ × max(R_m - R_f, 0) + ε
 | China A-share large cap | CSI 300 | 000300.SH |
 | China A-share small cap | CSI 500 / CSI 1000 | 000905.SH |
 | China A-share broad market | CSI All Share | 000985.SH |
-| Hong Kong equities | Hang Seng Index | HSI |
-| US equities | S&P 500 | SPX |
-| Crypto | BTC | BTC-USDT |
-| Multi-asset | 60/40 portfolio | self-constructed |
+| Multi-asset (external data) | custom blend | self-constructed via `run_python` |
 
 ### Risk-Adjusted Performance Metrics
 

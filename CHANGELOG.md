@@ -8,6 +8,7 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+- Token/efficiency (no local slowdown): compressed `prompts/base.md` (~−26%); API-only strip of historical `reasoning_content` (tool bodies kept full — no result truncation); block non-repeatable tool on 4th call; clip tool schema descriptions to 160 chars (`FIAGENT_TOOL_DESC_MAX`)
 - Phase1 Week4: Layer2 β (HS300+ZZ500+t) on backtest metrics; risk exposure attribution via Barra risk_*; L1 `assert_unit/frequency` chain guards; `tests/test_phase1_week4.py`
 - Phase1 Week3: dragon-tiger seat heuristic (`analyze_dragon_tiger`), `northbound_signal`, `calc_var`/`run_stress_test` A-share scenarios, thick Layer1 attribution
 - Phase1 Week2: `build_factor_panel` (alpha_*/risk_* zoo, IC notes, research.db bulk); universe_asof on backtest; Barra risk_* expansion; thin Layer1 attribution on run_backtest metrics

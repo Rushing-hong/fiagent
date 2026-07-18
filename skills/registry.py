@@ -84,27 +84,45 @@ class SkillRegistry:
         _, body = self._parse_frontmatter(text)
         return body
 
-    def format_catalog_xml(self) -> str:
-        if not self._skills:
+    @staticmethod
+    def _short_desc(text: str, *, limit: int = 48) -> str:
+        """System / tool schema 用的短摘要（渐进披露第一层）。"""
+        text = " ".join((text or "").split())
+        if len(text) <= limit:
+            return text
+        cut = text[: limit - 1]
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        return cut.rstrip("，,;；、./") + "…"
+
+    def format_catalog_xml(self, skills: list[Skill] | None = None) -> str:
+        """供 load_skill 的 schema：仅短描述，全文仍靠 execute 返回。"""
+        items = self._skills if skills is None else skills
+        if not items:
             return ""
         lines = ["<available_skills>"]
-        for skill in self._skills:
+        for skill in items:
             scope = "bundled" if skill.bundled else "user"
             lines.append("  <skill>")
             lines.append(f"    <name>{skill.name}</name>")
-            lines.append(f"    <description>{skill.description}</description>")
+            lines.append(
+                f"    <description>{self._short_desc(skill.description)}</description>"
+            )
             lines.append(f"    <scope>{scope}</scope>")
             lines.append("  </skill>")
         lines.append("</available_skills>")
         return "\n".join(lines)
 
-    def get_descriptions(self) -> str:
-        if not self._skills:
+    def get_descriptions(self, skills: list[Skill] | None = None) -> str:
+        """System prompt 技能索引：名称 + 短触发语，勿塞全文。"""
+        items = self._skills if skills is None else skills
+        if not items:
             return "（无可用 skill）"
         lines = []
-        for skill in self._skills:
+        for skill in items:
             tag = "内置" if skill.bundled else "用户"
-            lines.append(f"- [{tag}] `{skill.name}`: {skill.description}")
+            short = self._short_desc(skill.description)
+            lines.append(f"- [{tag}] `{skill.name}`: {short}")
         return "\n".join(lines)
 
     def save(self, name: str, description: str, content: str) -> str:

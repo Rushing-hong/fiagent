@@ -112,7 +112,7 @@ class SessionStore:
         rows = conn.execute(
             """
             SELECT s.id, s.title, s.created_at, s.updated_at,
-                   COUNT(m.id) AS message_count
+                   COUNT(CASE WHEN m.role != 'system' THEN 1 END) AS message_count
             FROM sessions s
             LEFT JOIN messages m ON m.session_id = s.id
             GROUP BY s.id
@@ -141,7 +141,7 @@ class SessionStore:
         if row is None:
             return None
         count = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+            "SELECT COUNT(*) FROM messages WHERE session_id = ? AND role != 'system'",
             (session_id,),
         ).fetchone()[0]
         return SessionInfo(
@@ -153,10 +153,22 @@ class SessionStore:
         )
 
     def find(self, partial_id: str) -> SessionInfo | None:
+        """精确匹配优先，其次前缀匹配（避免 LIKE %id% 误命中）。"""
+        pid = partial_id.strip()
+        if not pid:
+            return None
+        exact = self.get(pid)
+        if exact is not None:
+            return exact
         conn = self._connection()
         row = conn.execute(
-            "SELECT id FROM sessions WHERE id LIKE ? ORDER BY updated_at DESC LIMIT 1",
-            (f"%{partial_id}%",),
+            """
+            SELECT id FROM sessions
+            WHERE id LIKE ?
+            ORDER BY LENGTH(id) ASC, updated_at DESC
+            LIMIT 1
+            """,
+            (f"{pid}%",),
         ).fetchone()
         if row is None:
             return None
@@ -213,7 +225,11 @@ class SessionStore:
             if row["reasoning_content"]:
                 msg["reasoning_content"] = row["reasoning_content"]
             if row["tool_calls"]:
-                msg["tool_calls"] = json.loads(row["tool_calls"])
+                try:
+                    msg["tool_calls"] = json.loads(row["tool_calls"])
+                except json.JSONDecodeError:
+                    # 损坏则丢弃 tool_calls；后续 orphan tool 由 sanitize 清理
+                    pass
             if row["tool_call_id"]:
                 msg["tool_call_id"] = row["tool_call_id"]
             messages.append(msg)
@@ -226,6 +242,13 @@ class SessionStore:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             now = _now()
             for i, msg in enumerate(messages):
+                tool_calls = msg.get("tool_calls")
+                tool_calls_json = None
+                if tool_calls is not None:
+                    try:
+                        tool_calls_json = json.dumps(tool_calls, ensure_ascii=False)
+                    except (TypeError, ValueError):
+                        tool_calls_json = None
                 conn.execute(
                     """
                     INSERT INTO messages
@@ -237,13 +260,16 @@ class SessionStore:
                         msg["role"],
                         msg.get("content"),
                         msg.get("reasoning_content"),
-                        json.dumps(msg["tool_calls"], ensure_ascii=False) if msg.get("tool_calls") else None,
+                        tool_calls_json,
                         msg.get("tool_call_id"),
                         i,
                         now,
                     ),
                 )
-            self.touch(session_id)
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
             conn.commit()
         except Exception:
             conn.rollback()

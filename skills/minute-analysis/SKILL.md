@@ -1,101 +1,53 @@
 ---
 name: minute-analysis
-description: Minute-level data analysis and backtesting. Retrieves minute candlesticks through OKX/Tushare/yfinance and can be used both for analysis and as input to the backtest engine.
+description: A 股分钟级行情分析与回测。经 get_market_data / run_backtest（akshare 分钟）取 1/5/15/30/60 分钟 K。
 category: strategy
 ---
-# Minute-Level Data Analysis and Backtesting
 
-## Purpose
+# A 股分钟级分析与回测
 
-Retrieve minute-level candlestick data through data-source APIs and calculate intraday indicators (VWAP, TWAP, volume distribution, and more).
-Supports minute-level backtesting: set `"interval": "5m"` in `config.json` and use the `backtest` tool to run intraday strategies.
+取 A 股分钟 K，做日内指标（VWAP、量能分布等）或喂给 `run_backtest`。标的：`.SH` / `.SZ` / `.BJ`。
 
-## Backtest Configuration
+## 回测
 
-For minute-level backtests, simply add the `interval` field in `config.json`:
-
-```json
-{
-  "source": "okx",
-  "codes": ["BTC-USDT"],
-  "start_date": "2026-03-01",
-  "end_date": "2026-03-15",
-  "interval": "5m",
-  "initial_cash": 1000000,
-  "commission": 0.0005
-}
+```
+run_backtest(
+  codes=["600519.SH"],
+  start_date="2026-03-01",
+  end_date="2026-03-15",
+  interval="5",
+  strategy="ma_cross",
+  strategy_params={"fast": 5, "slow": 20}
+)
 ```
 
-- The annualization factor is inferred automatically from `source + interval` (`OKX 5m = 365 x 288 = 105120`)
-- Minute-level datasets are large. Recommended time limits: no more than 7 days for `1m`, no more than 30 days for `5m`, and no more than 1 year for `1H`
+- `interval`：`1` / `5` / `15` / `30` / `60`（分钟）；`1d` 为日线  
+- 分钟数据来自 `market.loaders.fetch_akshare_minute`（近端、历史较短）  
+- 引擎可对超长分钟序列截断（约 3000 bar）  
+- 建议窗口：`1` 分钟 ≤7 日，`5` 分钟 ≤30 日  
 
-## Supported Data Sources and Intervals
+## 取数后自算指标
 
-| Data Source | Supported Intervals | Notes |
-|--------|---------|------|
-| OKX | 1m/5m/15m/30m/1H/4H | Cryptocurrency, trades 7x24 |
-| Tushare | 1m/5m/15m/30m/1H | China A-shares, requires score >= 2000 |
-| yfinance | 1m/5m/15m/30m/1H | Hong Kong / US equities (free, no key required) |
-
-## OKX Minute Candlestick API
-
-```python
-import requests
-import pandas as pd
-
-resp = requests.get("https://www.okx.com/api/v5/market/candles", params={
-    "instId": "BTC-USDT",
-    "bar": "1m",       # 1m/5m/15m/30m/1H/4H
-    "limit": "300",    # At most 300 rows per request
-})
-data = resp.json()["data"]
-columns = ["ts", "open", "high", "low", "close", "vol", "volCcy", "volCcyQuote", "confirm"]
-df = pd.DataFrame(reversed(data), columns=columns)
-df["ts"] = pd.to_datetime(df["ts"].astype("int64"), unit="ms")
-for col in ["open", "high", "low", "close", "vol"]:
-    df[col] = df[col].astype(float)
+```
+get_market_data(
+  codes=["600519.SH"],
+  start_date="2026-03-01",
+  end_date="2026-03-15",
+  interval="5m",
+  source="auto"
+)
 ```
 
-## Indicator Calculation Templates
+再用 `run_python` / `write` 算 VWAP、分时量能等。
 
-### VWAP (Volume-Weighted Average Price)
+## 数据源
 
-```python
-typical_price = (df["high"] + df["low"] + df["close"]) / 3
-df["vwap"] = (typical_price * df["vol"]).cumsum() / df["vol"].cumsum()
-```
+| 来源 | 周期 | 说明 |
+|------|------|------|
+| akshare 分钟 | 1/5/15/30/60 | `run_backtest` 非日线默认 |
+| 腾讯/东财/mootdx/baostock | 日线为主 | `get_market_data` auto 链 |
 
-### TWAP (Time-Weighted Average Price)
+## 注意
 
-```python
-df["twap"] = df["close"].expanding().mean()
-```
-
-### Volume Distribution
-
-```python
-df["vol_pct"] = df["vol"] / df["vol"].sum() * 100
-hourly_vol = df.set_index("ts").resample("1h")["vol"].sum()
-```
-
-## Parameters
-
-| Parameter | Description |
-|------|------|
-| inst_id | Trading pair, such as `"BTC-USDT"` |
-| bar / interval | Candlestick interval: `1m/5m/15m/30m/1H/4H` |
-| limit | Number of records to retrieve (OKX returns at most 300 per request) |
-
-## Common Pitfalls
-
-- OKX returns at most 300 rows per request. The loader paginates automatically, but `1m` datasets are still very large
-- The time range for minute-level backtests should not be too long, otherwise both data retrieval and backtesting will become slow or time out
-- Tushare minute endpoints require a score >= 2000. If the score is insufficient, the API returns empty data
-- Timestamps are Unix timestamps in milliseconds and should be converted with `unit="ms"`
-- Transaction costs for minute strategies should be set lower (for example 0.05% instead of 0.1%) because intraday trading is frequent
-
-## Dependencies
-
-```bash
-pip install pandas numpy requests
-```
+1. `run_backtest` 对 A 股仍应用 T+1 / 涨跌停规则  
+2. 分钟缺口、停牌空洞需在分析里显式处理  

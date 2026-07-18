@@ -11,7 +11,7 @@ Mootdx talks the native 通达信 (TDX) binary protocol over TCP, bypassing the 
 - GitHub: https://github.com/mootdx/mootdx
 - Install: `pip install mootdx && pip install 'httpx>=0.28.1'`
 
-> Mootdx pins `httpx<0.26` in `setup.py`, but only uses basic `httpx.Client/get` APIs that are forward-compatible. The second `pip install` restores the modern httpx that the rest of Vibe-Trading (MCP server, fastmcp) needs.
+> Mootdx pins `httpx<0.26` in `setup.py`；第二个 `pip install` 用于对齐本仓库使用的较新 httpx。
 
 ## Quick Start
 
@@ -69,24 +69,28 @@ df_15m = client.bars(symbol="600519", frequency=1, offset=800)
 
 `bars()` returns the same OHLC columns plus a duplicate `volume` (alongside the legacy `vol`), a `datetime` string column, and decomposed `year / month / day / hour / minute` columns.
 
-## Built-in Loader
+## 项目内接入（A 股）
 
-`backtest/loaders/mootdx_loader.py` is registered as the `mootdx` source. Fallback chain for `a_share` is `[tushare, mootdx, akshare]` — tushare wins when a token is present; mootdx wins when no token but TCP egress works; akshare is the broadest fallback.
+封装在 `market/loaders.py` → `fetch_mootdx`，由 `get_market_data(source="mootdx"|"auto")` 调用。
+
+A 股日线默认链（`source=auto`）：`tencent → mootdx → eastmoney → baostock → akshare`。
 
 ```python
-from backtest.runner import run
-result = run(strategy=..., source="mootdx")  # explicit override
+# 工具侧
+# get_market_data(codes=["600519.SH"], start_date="2024-01-01", end_date="2024-12-31", source="mootdx")
+
+from market.loaders import fetch_mootdx
+rows = fetch_mootdx("600519.SH", "2024-01-01", "2024-12-31")
 ```
 
 ## Known Limitations
 
 | Limitation | Workaround |
 |------------|------------|
-| 北交所 (BJ): `get_k_data` raises `KeyError`, `bars()` returns empty (upstream missing data) | Loader logs a warning and skips BJ symbols — use akshare or tushare |
-| Extended market (futures/options) returns empty as of v0.11.7 (upstream issue) | Use tushare/akshare for futures |
-| Each `bars()` page is 800 rows; loader paginates back up to 25 pages (≈10y daily / ≈5y 1H / ≈3mo 1m) | For longer 1m history use tushare minute bars |
-| Server selection has cold-start latency (first call picks the fastest server) | First call may be ~2s slower |
-| Returns data in 前复权 by default — no API parameter for 不复权 | Use tushare/akshare if raw prices are required |
+| 北交所 (BJ): `get_k_data` 可能 KeyError / 空 | 换 `source=akshare` / `eastmoney` |
+| `bars()` 单页约 800 行 | 更长分钟史用 `run_backtest` 的 akshare 分钟源 |
+| 首连选服较慢 | 首次调用可多等约 2s |
+| 默认前复权 | 需要其它复权口径时换源核对 |
 
 ## Reference Docs
 

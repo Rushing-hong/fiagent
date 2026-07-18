@@ -63,7 +63,9 @@ python agent.py --plain  # Rich terminal mode
 |------|------|
 | `DEEPSEEK_API_KEY` | DeepSeek API key (required) |
 | `FIAGENT_TZ` | Timezone, default `Asia/Shanghai` |
-| `FIAGENT_MAX_TOOL_ROUNDS` | Max tool-call rounds, default 10 |
+| `FIAGENT_MAX_TOOL_ROUNDS` | Soft max agent steps (last step text-only), default 40 |
+| `FIAGENT_DOOM_LOOP_AT` | Reject tool after N identical name+args in a row, default 3 |
+| `FIAGENT_HTTP_RETRIES` | HTTP connection retries on disconnect/timeout, default 3 |
 | `FIAGENT_IWENCAI_KEY` | Hithink iwencai API key (optional) |
 | `FIAGENT_PLAIN_UI` | Set to `1` for plain terminal mode |
 

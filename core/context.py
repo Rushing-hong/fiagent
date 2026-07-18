@@ -25,11 +25,13 @@ class AgentContext:
         self.tools = ToolRegistry(root / "tools")
         self.mcp = MCPRegistry(root / "mcps")
         self._base_prompt_path = root / "prompts" / "base.md"
+        self._tools_schema_cache: list[dict] | None = None
 
     def refresh(self) -> None:
         self.skills.refresh()
         self.tools.refresh()
         self.mcp.refresh()
+        self._tools_schema_cache = None
 
     def enabled_tools(self) -> list[tuple[str, str]]:
         disabled = get_disabled_tools()
@@ -137,18 +139,26 @@ class AgentContext:
         return "\n\n".join(parts)
 
     def build_openai_tools(self) -> list[dict[str, Any]]:
+        if self._tools_schema_cache is not None:
+            return self._tools_schema_cache
         disabled = get_disabled_tools()
         schemas = [
             s for s in self.tools.build_schemas(self)
             if s.get("function", {}).get("name") not in disabled
         ]
         schemas.extend(self.mcp.build_schemas())
+        self._tools_schema_cache = schemas
         return schemas
 
     def execute_tool(self, name: str, arguments: str) -> str:
         if not is_tool_enabled(name):
             return f"工具 `{name}` 已被用户禁用（Ctrl+P → 管理工具 可重新开启）"
-        args = json.loads(arguments or "{}")
+        try:
+            args = json.loads(arguments or "{}")
+        except json.JSONDecodeError as exc:
+            return f"工具 `{name}` 参数 JSON 非法: {exc}"
+        if not isinstance(args, dict):
+            return f"工具 `{name}` 参数必须是 JSON 对象"
         mcp_hit = name.startswith("mcp_") or any(
             t.name == name for t in self.mcp.all()
         ) or any(

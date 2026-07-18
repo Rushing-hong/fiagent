@@ -261,4 +261,4 @@ Target price ¥30.8, current price ¥25.0, upside 23%
 3. **China A-share valuation system is unique**: shell value / liquidity premium / policy premium mean US-equity standards cannot be copied directly
 4. **Valuation is not a target price**: markets can remain irrational for a long time, and valuation is an anchor, not a trading signal
 5. **Special handling for cyclicals**: use normalized earnings (mid-cycle earnings), not current earnings
-6. **Not suitable for cryptocurrencies**: traditional valuation frameworks do not apply to BTC / ETH; use on-chain metrics instead (see `onchain-analysis`)
+6. **Scope**: this skill targets A-share equities; do not apply DCF/comps playbooks to crypto or non-A-share tickers via fiagent market tools

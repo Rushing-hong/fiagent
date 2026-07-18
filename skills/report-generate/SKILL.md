@@ -30,7 +30,7 @@ Generate structured, professional-grade financial research reports. Follow the c
 # [Report Title]
 
 > **Rating**: Buy | **Target Price**: ¥XX | **Current Price**: ¥XX
-> **Analyst**: Vibe-Trading | **Date**: 2026-03-28
+> **Analyst**: fiagent | **Date**: 2026-03-28
 
 ## Summary
 
@@ -260,4 +260,3 @@ Output the complete Markdown research report directly, following the template st
 4. **Disclaimer is mandatory**: AI-generated reports must explicitly state that they are not investment advice
 5. **Avoid absolutes**: "likely" is better than "certain", and "may" is better than "will"
 6. **China A-share specific risks**: policy risk / delisting risk / goodwill impairment / major-shareholder selling / lock-up expiry
-7. **Crypto-specific risks**: regulation / smart-contract exploits / liquidity risk / rug pulls
