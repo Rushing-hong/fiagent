@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atrading"
+version = "0.1.0"
+description = "A-share research agent — data, backtest, and trade review"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Atrading contributors" }]
+dependencies = [
+    "openai>=1.0.0",
+    "rich>=13.0.0",
+    "requests>=2.28.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "ddgs>=9.0.0",
+    "textual>=8.2.8",
+    "akshare>=1.14.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+atrading = "atrading.cli:main"
+
+[tool.setuptools]
+py-modules = ["agent", "brand", "paths"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "atrading*",
+    "core*",
+    "ui*",
+    "market*",
+    "tools*",
+    "session*",
+    "hooks*",
+    "analysis*",
+    "signals*",
+    "mcps*",
+    "skills*",
+]

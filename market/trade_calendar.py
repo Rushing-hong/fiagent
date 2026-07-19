@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import bisect
 import logging
 from datetime import date, datetime, timedelta
 from functools import lru_cache
@@ -60,8 +61,14 @@ def _cached_set() -> frozenset[str]:
     return frozenset(store.load_trade_days())
 
 
+@lru_cache(maxsize=1)
+def _cached_days() -> tuple[str, ...]:
+    return tuple(sorted(_cached_set()))
+
+
 def invalidate_calendar_cache() -> None:
     _cached_set.cache_clear()
+    _cached_days.cache_clear()
 
 
 def is_trading_day(d: date | datetime | pd.Timestamp | str) -> bool:
@@ -72,28 +79,32 @@ def is_trading_day(d: date | datetime | pd.Timestamp | str) -> bool:
             return ymd in cached
     except Exception as exc:
         logger.warning("trade calendar cache read failed: %s", exc)
-    # 无日历时退回工作日；含法定节假日，调用方应视为 degraded
+    # 无可用交易所日历时不猜工作日（避免把法定节假日当交易日）
     logger.warning(
-        "trade calendar empty/unavailable; weekday fallback for %s (may include CN holidays)",
+        "trade calendar empty/unavailable; treating %s as non-trading day",
         ymd,
     )
-    return pd.Timestamp(ymd).weekday() < 5
+    return False
 
 
 def trading_days(start: str, end: str) -> list[str]:
+    """返回 [start, end] 内交易所交易日。日历不可用时返回空列表（不再 bdate_range 冒充）。"""
     s, e = _to_ymd(start), _to_ymd(end)
     try:
-        days = [d for d in sorted(_cached_set()) if s <= d <= e]
+        ordered = _cached_days()
+        left = bisect.bisect_left(ordered, s)
+        right = bisect.bisect_right(ordered, e)
+        days = list(ordered[left:right])
         if days:
             return days
     except Exception as exc:
         logger.warning("trade calendar range failed: %s", exc)
     logger.warning(
-        "trade calendar empty for %s..%s; weekday fallback (includes CN holidays)",
+        "trade calendar empty for %s..%s; returning [] (no weekday fallback)",
         s,
         e,
     )
-    return [x.strftime("%Y-%m-%d") for x in pd.bdate_range(s, e)]
+    return []
 
 
 def trading_days_index(start: str, end: str) -> pd.DatetimeIndex:
@@ -120,20 +131,20 @@ def align_dates_to_trading(
 
 def next_trading_day(d: str | date | datetime, *, n: int = 1) -> str | None:
     ymd = _to_ymd(d)
-    days = sorted(_cached_set())
-    later = [x for x in days if x > ymd]
-    if len(later) < n:
+    days = _cached_days()
+    index = bisect.bisect_right(days, ymd) + n - 1
+    if n < 1 or index >= len(days):
         return None
-    return later[n - 1]
+    return days[index]
 
 
 def prev_trading_day(d: str | date | datetime, *, n: int = 1) -> str | None:
     ymd = _to_ymd(d)
-    days = sorted(_cached_set())
-    earlier = [x for x in days if x < ymd]
-    if len(earlier) < n:
+    days = _cached_days()
+    index = bisect.bisect_left(days, ymd) - n
+    if n < 1 or index < 0:
         return None
-    return earlier[-n]
+    return days[index]
 
 
 def session_hint(d: str | date | datetime | None = None) -> dict[str, object]:

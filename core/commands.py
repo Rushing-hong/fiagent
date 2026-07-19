@@ -55,7 +55,7 @@ SESSION_COMMANDS = {
     "/tui": "切换为 TUI 全屏界面（保存偏好并重启）",
     "/plain": "切换为纯终端 Rich 界面（保存偏好并重启）",
     "/ui": "查看当前界面模式",
-    "/quit": "退出 fiagent",
+    "/quit": "退出 Atrading",
 }
 
 # 别名 → 主命令（可执行；补全时若键入别名则带出主命令）
@@ -162,9 +162,18 @@ def list_slash_matches(query: str) -> list[tuple[str, str]]:
     return matched
 
 
+def _reexec_base_argv() -> list[str]:
+    """Prefer ``python -m atrading`` so console_scripts .exe restarts cleanly."""
+    try:
+        import atrading  # noqa: F401
+    except ImportError:
+        script = os.path.abspath(sys.argv[0])
+        return [sys.executable, script]
+    return [sys.executable, "-m", "atrading"]
+
+
 def _build_reexec_args(*, resume_id: str | None = None) -> list[str]:
-    script = os.path.abspath(sys.argv[0])
-    args = [sys.executable, script]
+    args = _reexec_base_argv()
     skip_next = False
     for arg in sys.argv[1:]:
         if skip_next:

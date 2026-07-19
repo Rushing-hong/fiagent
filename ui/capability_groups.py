@@ -68,6 +68,18 @@ TOOL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
             "get_yield_curve",
             "get_macro_data",
             "get_trade_calendar",
+            "get_guba_sentiment",
+            "calc_overnight_returns",
+        }),
+    ),
+    (
+        "ESG与另类",
+        "碳价、ESG公告、产业链图谱",
+        frozenset({
+            "get_carbon_prices",
+            "search_esg_reports",
+            "get_esg_overview",
+            "query_industry_chain",
         }),
     ),
     (
@@ -184,9 +196,11 @@ SKILL_CATEGORIES: list[tuple[str, str, frozenset[str]]] = [
             "etf-analysis",
             "hk-connect-flow",
             "ai-industry-chain",
+            "industry-chain",
             "corporate-events",
             "regulatory-knowledge",
             "report-generate",
+            "esg-analysis",
         }),
     ),
 ]

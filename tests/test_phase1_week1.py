@@ -57,6 +57,11 @@ def test_trade_calendar_helpers(monkeypatch):
         "_cached_set",
         lambda: frozenset(["2024-01-02", "2024-01-03", "2024-01-05"]),
     )
+    monkeypatch.setattr(
+        tc,
+        "_cached_days",
+        lambda: ("2024-01-02", "2024-01-03", "2024-01-05"),
+    )
     assert is_trading_day("2024-01-02") is True
     assert is_trading_day("2024-01-04") is False
     assert trading_days("2024-01-01", "2024-01-05") == [

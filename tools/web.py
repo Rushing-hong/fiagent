@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from brand import USER_AGENT
 from tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ def _read_url_direct(url: str) -> str:
     try:
         resp = requests.get(
             url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; fiagent/1.0)"},
+            headers={"User-Agent": USER_AGENT},
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()

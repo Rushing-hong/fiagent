@@ -8,6 +8,9 @@ data/research.db-wal
 data/tmp/
 data/ui_cache/
 data/ui_prefs.json
+data/industry_chain.json
+data/sessions
+data/sessions/
 __pycache__/
 *.py[cod]
 .Python

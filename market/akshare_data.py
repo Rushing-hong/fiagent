@@ -10,6 +10,7 @@ Gracefully degrades when akshare is not installed (tools will report "not instal
 from __future__ import annotations
 
 import json
+import importlib
 import logging
 from typing import Any
 
@@ -21,19 +22,20 @@ logger = logging.getLogger(__name__)
 # akshare availability check
 # ---------------------------------------------------------------------------
 
-_AK_AVAILABLE = False
-try:
-    import akshare as ak  # noqa: F401
-    _AK_AVAILABLE = True
-except ImportError:
-    pass
+ak: Any | None = None
 
 
 def _require_ak() -> None:
-    if not _AK_AVAILABLE:
+    """Import the large akshare package only when an akshare tool is used."""
+    global ak
+    if ak is not None:
+        return
+    try:
+        ak = importlib.import_module("akshare")
+    except ImportError:
         raise ImportError(
             "akshare 未安装。请执行: pip install akshare"
-        )
+        ) from None
 
 
 # ---------------------------------------------------------------------------

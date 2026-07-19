@@ -67,10 +67,10 @@ def _plain_static(content: str, *, classes: str = "") -> Static:
 
 
 class FiagentApp(App):
-    """fiagent Textual 界面。"""
+    """Atrading Textual UI."""
 
     CSS_PATH = _TCSS
-    TITLE = "fiagent"
+    TITLE = "Atrading"
     ALLOW_MAXIMIZE = False
     BINDINGS = [
         Binding("escape", "request_pause", "Pause", show=True),
@@ -158,6 +158,7 @@ class FiagentApp(App):
         turn_control.set_tui_mode(True)
         self._close_slash_menu()
         self._reload_session_view(announce=False)
+        self._pin_bottom()
         self.query_one("#prompt", PromptTextArea).focus()
 
     def _reload_session_view(self, *, announce: bool = True) -> None:
@@ -171,7 +172,7 @@ class FiagentApp(App):
                 classes="line-info",
             )
         self._refresh_idle_status()
-        self._scroll_bottom()
+        self._pin_bottom()
 
     def on_unmount(self) -> None:
         ui.unbind_tui()
@@ -209,22 +210,37 @@ class FiagentApp(App):
     def _is_near_bottom(self) -> bool:
         chat = self._chat()
         try:
+            if chat.is_vertical_scroll_end:
+                return True
             return chat.scroll_y >= max(0, chat.max_scroll_y - _SCROLL_TAIL)
         except Exception:
             return True
 
+    def _anchor_released(self) -> bool:
+        """Textual native anchor was released by user scroll."""
+        try:
+            return bool(getattr(self._chat(), "_anchor_released", False))
+        except Exception:
+            return False
+
     def _scroll_bottom(self) -> None:
-        self._chat().scroll_end(animate=False)
+        self._chat().scroll_end(animate=False, immediate=True, x_axis=False)
 
     def _pin_bottom(self) -> None:
         """重新粘底并滚到末尾（用户发送 / 主动回底时用）。"""
         self._stick_bottom = True
         self._stream_follow = True
-        self._scroll_bottom()
+        chat = self._chat()
+        # Native anchor keeps view at bottom on layout growth without yanking after release
+        chat.anchor(True)
 
     def _unpin_bottom(self) -> None:
         self._stick_bottom = False
         self._stream_follow = False
+        try:
+            self._chat().release_anchor()
+        except Exception:
+            pass
 
     def _scroll_bottom_if_pinned(self) -> None:
         """仅在用户未上滑（粘底）时跟底，允许查看上方历史。"""
@@ -232,8 +248,14 @@ class FiagentApp(App):
             return
         if self._stream_body is not None and not self._stream_follow:
             return
-        if not self._is_near_bottom() and self._stream_body is not None:
-            # 流式增高过程中若已离开底部，取消粘底
+        chat = self._chat()
+        if chat.is_vertical_scrollbar_grabbed or self._anchor_released():
+            self._unpin_bottom()
+            return
+        # Native anchor already follows layout growth; scroll_end would re-bite a released anchor
+        if chat.is_anchored:
+            return
+        if not self._is_near_bottom():
             self._unpin_bottom()
             return
         self._scroll_bottom()
@@ -255,8 +277,7 @@ class FiagentApp(App):
             event.prevent_default()
             return
         if self._is_near_bottom():
-            self._stick_bottom = True
-            self._stream_follow = True
+            self._pin_bottom()
 
     def on_key(self, event: events.Key) -> None:
         # 焦点在输入框时也可滚聊天区：PageUp/PageDown
@@ -268,8 +289,7 @@ class FiagentApp(App):
         if event.key == "pagedown":
             self._chat().scroll_page_down(animate=False)
             if self._is_near_bottom():
-                self._stick_bottom = True
-                self._stream_follow = True
+                self._pin_bottom()
             event.stop()
             return
 
@@ -376,20 +396,18 @@ class FiagentApp(App):
 
     def mount_user(self, content: str, *, collapsed: bool = False) -> None:
         # 用户新发言：强制粘底，方便看本轮输出
-        self._stick_bottom = True
-        self._stream_follow = True
         if collapsed and len(content) >= 200:
             first = content.strip().splitlines()[0][:48]
             from rich.markup import escape
 
             self.mount_foldable(f"You: {escape(first)}", content, kind="user", collapsed=True)
-            self._scroll_bottom()
+            self._pin_bottom()
             return
         from rich.markup import escape
         self._chat().mount(
             Static(f"[bold #3fb950]You[/]  {escape(content)}", classes="line-user")
         )
-        self._scroll_bottom()
+        self._pin_bottom()
 
     def reset_turn_ui(self) -> None:
         self._last_thought_text = ""
@@ -618,9 +636,10 @@ class FiagentApp(App):
         # 流式中只刷新尾部，避免超长正文拖垮布局；结束时再写全文
         self._stream_body.update(self._stream_tail_text(self._stream_pending, cursor=True))
         self._stream_last_flush = time.monotonic()
-        # 自身增高时不要用 near-bottom 检测，否则会误取消 follow
-        if self._stream_follow and self._stick_bottom:
-            self._scroll_bottom()
+        # 勿强制 scroll_end：会把已上滑的用户拽回底部，并重新咬住 Textual anchor。
+        # 粘底时由 chat.anchor(True) + compositor 跟随增高。
+        if self._stick_bottom and self._anchor_released():
+            self._unpin_bottom()
 
     def stream_reply_update(self, content: str) -> None:
         self._stream_pending = content
@@ -632,7 +651,7 @@ class FiagentApp(App):
 
     def stream_reply_end(self, content: str) -> None:
         self._cancel_stream_timer()
-        follow = self._stream_follow
+        follow = self._stream_follow and self._stick_bottom and not self._anchor_released()
         root = self._stream_root
         body = self._stream_body
         self._stream_root = None
@@ -649,8 +668,8 @@ class FiagentApp(App):
             body.update(content)
             root.remove_class("stream-live")
             root.add_class("stream-done")
-            if follow and self._stick_bottom:
-                self._scroll_bottom()
+            if follow:
+                self._scroll_bottom_if_pinned()
             return
 
         if root is not None and root.is_attached:
@@ -799,7 +818,7 @@ class FiagentApp(App):
         )
         yield SystemCommand(
             "退出",
-            "退出 fiagent",
+            "退出 Atrading",
             self.action_quit,
         )
 

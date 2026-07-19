@@ -1,8 +1,8 @@
-# fiagent
+# Atrading
 
 <p align="center">
-  <b>AI Quant Research Agent for the Chinese Market</b><br>
-  DeepSeek ReAct Agent · 40+ Tools · 49 Domain Skills · Dual UI
+  <b>A-share research agent — data, backtest, and trade review</b><br>
+  DeepSeek ReAct Agent · 60+ Tools · 50 Domain Skills · Dual UI
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 
 ---
 
-fiagent is a terminal-based AI investment research assistant. Chat in natural language to query market data, backtest strategies, analyze factors, research fundamentals, or review your trades — across **A-shares, futures, convertible bonds, and ETF options**.
+**Atrading** is a terminal A-share AI research agent (formerly fiagent). Natural language for quotes, backtests, factors, fundamentals, and trade review; covers **A-shares, futures, convertibles, ETF options**. Env vars still use `FIAGENT_*` for compatibility.
 
 ```
 You: How crowded is the AI computing sector right now?
@@ -42,18 +42,19 @@ Built on ideas from two excellent open-source projects:
 ## Quick Start
 
 ```bash
-# 1. Install
+# 1. Install (editable — registers the `atrading` command)
 git clone https://github.com/Rushing-hong/fiagent.git
 cd fiagent
-pip install -r requirements.txt
+pip install -e .
 
 # 2. Set API Key (pick one)
 echo DEEPSEEK_API_KEY=sk-xxxxxxxx > .env   # Option A: write to .env
 set DEEPSEEK_API_KEY=sk-xxxxxxxx           # Option B: env var (prompted on first run)
 
 # 3. Launch
-python agent.py          # Textual TUI — recommended
-python agent.py --plain  # Rich terminal mode
+atrading                 # Textual TUI — recommended
+atrading --plain         # Rich terminal mode
+# python -m atrading     # same entry without relying on PATH
 ```
 
 **In-chat commands**: `/help` `/new` `/sessions` `/resume <id>` `/reload` `/thinking` `/tui` `/plain`
@@ -145,8 +146,9 @@ User Input
 ```
 
 ```
-fiagent/
+Atrading/  # repo folder may still be fiagent
 ├── agent.py              # Entry point
+├── brand.py              # Product name / tagline
 ├── core/                 # ReAct loop + streaming LLM + CLI + commands
 ├── session/              # SQLite multi-session persistence
 ├── hooks/                # Pluggable event hooks

@@ -262,33 +262,35 @@ class ResearchStore:
         if not rows:
             return 0
         conn = self._conn()
-        n = 0
+        payload: list[tuple[Any, ...]] = []
         for r in rows:
             td = str(r.get("trade_date") or "")
             if not td:
                 continue
-            conn.execute(
-                """
-                INSERT INTO bars(code, interval, trade_date, open, high, low, close, volume)
-                VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(code, interval, trade_date) DO UPDATE SET
-                  open=excluded.open, high=excluded.high, low=excluded.low,
-                  close=excluded.close, volume=excluded.volume
-                """,
+            payload.append(
                 (
-                    code,
-                    interval,
-                    td,
+                    code, interval, td,
                     float(r.get("open") or 0),
                     float(r.get("high") or 0),
                     float(r.get("low") or 0),
                     float(r.get("close") or 0),
                     float(r.get("volume") or 0),
-                ),
+                )
             )
-            n += 1
+        if not payload:
+            return 0
+        conn.executemany(
+            """
+            INSERT INTO bars(code, interval, trade_date, open, high, low, close, volume)
+            VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(code, interval, trade_date) DO UPDATE SET
+              open=excluded.open, high=excluded.high, low=excluded.low,
+              close=excluded.close, volume=excluded.volume
+            """,
+            payload,
+        )
         conn.commit()
-        return n
+        return len(payload)
 
     def load_bars(
         self,
@@ -362,14 +364,26 @@ class ResearchStore:
 
     def load_consensus_history(self, code: str, days: int = 365) -> list[dict[str, Any]]:
         conn = self._conn()
+        cutoff: str | None = None
+        if days > 0:
+            from datetime import timedelta
+
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=days)
+            ).strftime("%Y-%m-%d")
+        where = "WHERE code=?"
+        args: list[Any] = [code]
+        if cutoff:
+            where += " AND asof >= ?"
+            args.append(cutoff)
         cur = conn.execute(
-            """
+            f"""
             SELECT asof, source, fiscal_year, eps, meta_json
             FROM consensus_snapshots
-            WHERE code=?
+            {where}
             ORDER BY asof ASC
             """,
-            (code,),
+            args,
         )
         out = []
         for row in cur.fetchall():
@@ -379,13 +393,6 @@ class ResearchStore:
                 "year": row["fiscal_year"],
                 "eps": row["eps"],
             })
-        if days > 0 and out:
-            from datetime import timezone
-
-            cutoff = (
-                datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)
-            ).strftime("%Y-%m-%d")
-            out = [x for x in out if str(x["asof"])[:10] >= cutoff]
         return out
 
     def save_universe(

@@ -369,11 +369,14 @@ class AgentUI:
         self.console.print(f"[hook]hook:{tag}[/] [muted]{message}[/]")
 
     def banner(self) -> None:
+        from brand import APP_NAME, TAGLINE, TAGLINE_ZH
+
         art = Text()
-        art.append("fi", style="banner")
-        art.append("agent", style="accent")
+        art.append(APP_NAME, style="banner")
         body = Group(
             art,
+            Text(TAGLINE, style="muted"),
+            Text(TAGLINE_ZH, style="muted"),
             Text("DeepSeek Agent  ·  思考 · 工具 · Skills · Hooks · Session", style="muted"),
             Text("折叠: e=展开最新  1-9=展开对应项  list=列表  /thinking=思考开关", style="fold"),
             Text("界面: /tui  /plain 切换（保存偏好并重启）", style="fold"),

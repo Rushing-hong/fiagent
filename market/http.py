@@ -51,13 +51,18 @@ def _get_session(host_key: str) -> requests.Session:
 def _wait(host_key: str, min_interval: float) -> None:
     if min_interval <= 0:
         return
+    # Reserve this host's next slot atomically, then sleep outside the global
+    # lock. Otherwise one throttled host blocks unrelated hosts as well.
     with _throttle_lock:
         now = time.monotonic()
-        last = _last_request.get(host_key)
-        if last is not None and now < last + min_interval:
-            sleep_for = last + min_interval - now + random.uniform(0, _JITTER_MAX_S)
-            time.sleep(sleep_for)
-        _last_request[host_key] = time.monotonic()
+        last = _last_request.get(host_key, now - min_interval)
+        scheduled = max(now, last + min_interval)
+        if scheduled > now:
+            scheduled += random.uniform(0, _JITTER_MAX_S)
+        _last_request[host_key] = scheduled
+    sleep_for = scheduled - now
+    if sleep_for > 0:
+        time.sleep(sleep_for)
 
 
 def resolve_min_interval(env_var: str, default: float) -> float:

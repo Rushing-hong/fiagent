@@ -1,0 +1,18 @@
+{
+  "_comment": "示例：复制为 data/industry_chain.json 或设置 FIAGENT_INDUSTRY_CHAIN_PATH。完整数据见 ChainKnowledgeGraph GitHub。",
+  "companies": {
+    "601012.SH": {"name": "隆基绿能", "code": "601012.SH"},
+    "600438.SH": {"name": "通威股份", "code": "600438.SH"}
+  },
+  "products": {
+    "工业硅": {},
+    "多晶硅": {},
+    "单晶硅片": {}
+  },
+  "edges": [
+    {"source": "工业硅", "target": "多晶硅", "relation": "上游材料"},
+    {"source": "多晶硅", "target": "单晶硅片", "relation": "上游材料"},
+    {"source": "隆基绿能", "target": "单晶硅片", "relation": "主营产品", "company_code": "601012.SH"},
+    {"source": "通威股份", "target": "多晶硅", "relation": "主营产品", "company_code": "600438.SH"}
+  ]
+}

@@ -60,6 +60,15 @@ class GetTradeCalendarTool(BaseTool):
             if not s or not e:
                 return err("range 需要 start_date 与 end_date")
             days = trading_days(s, e)
+            if not days:
+                refresh_calendar_cache(force=True)
+                invalidate_calendar_cache()
+                days = trading_days(s, e)
+            if not days:
+                return err(
+                    "交易日历为空；请 mode=refresh 后重试，或检查 akshare 网络",
+                    quality="degraded",
+                )
             return ok(
                 {"start_date": s[:10], "end_date": e[:10], "count": len(days), "days": days},
                 market="a_share",

@@ -66,6 +66,9 @@ class ToolRegistry:
     def __init__(self, tools_dir: Path) -> None:
         self.tools_dir = tools_dir
         self._tools: dict[str, BaseTool] = {}
+        self._class_cache: dict[
+            Path, tuple[tuple[int, int], list[type[BaseTool]]]
+        ] = {}
         self.refresh()
 
     def _classes_in_module(self, module) -> list[type[BaseTool]]:
@@ -89,8 +92,19 @@ class ToolRegistry:
             return []
 
         classes: list[type[BaseTool]] = []
+        live_paths: set[Path] = set()
         for path in sorted(self.tools_dir.glob("*.py")):
             if path.name.startswith("_") or path.name in ("base.py",) or path.name.startswith("test_"):
+                continue
+            live_paths.add(path)
+            try:
+                stat = path.stat()
+                signature = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                continue
+            cached = self._class_cache.get(path)
+            if cached is not None and cached[0] == signature:
+                classes.extend(cached[1])
                 continue
             module_name = f"_fiagent_tool_{path.stem}"
             spec = importlib.util.spec_from_file_location(module_name, path)
@@ -98,7 +112,12 @@ class ToolRegistry:
                 continue
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            classes.extend(self._classes_in_module(module))
+            found = self._classes_in_module(module)
+            self._class_cache[path] = (signature, found)
+            classes.extend(found)
+        stale = set(self._class_cache) - live_paths
+        for path in stale:
+            self._class_cache.pop(path, None)
         return classes
 
     def refresh(self) -> None:

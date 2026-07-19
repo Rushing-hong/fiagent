@@ -8,24 +8,48 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _rows_from_df(df, date_col: str = "trade_date") -> list[dict[str, Any]]:
+def _rows_from_df(
+    df,
+    date_col: str = "trade_date",
+    *,
+    preserve_time: bool = False,
+    null_to_zero: bool = False,
+) -> list[dict[str, Any]]:
     if df is None or df.empty:
         return []
-    out: list[dict[str, Any]] = []
-    for idx, row in df.iterrows():
-        if date_col in df.columns:
-            td = str(row[date_col])[:10]
-        else:
-            td = str(idx)[:10]
-        out.append({
+    n = len(df)
+
+    def values(en: str, zh: str) -> list[Any]:
+        column = en if en in df.columns else zh if zh in df.columns else None
+        return df[column].tolist() if column else [0] * n
+
+    if date_col in df.columns:
+        date_values = df[date_col].astype(str).tolist()
+    else:
+        date_values = [str(idx) for idx in df.index]
+    dates = date_values if preserve_time else [value[:10] for value in date_values]
+    opens = values("open", "开盘")
+    closes = values("close", "收盘")
+    highs = values("high", "最高")
+    lows = values("low", "最低")
+    volumes = values("volume", "成交量")
+
+    def number(value: Any) -> float:
+        return float(value or 0) if null_to_zero else float(value)
+
+    return [
+        {
             "trade_date": td,
-            "open": float(row.get("open", row.get("开盘", 0))),
-            "close": float(row.get("close", row.get("收盘", 0))),
-            "high": float(row.get("high", row.get("最高", 0))),
-            "low": float(row.get("low", row.get("最低", 0))),
-            "volume": float(row.get("volume", row.get("成交量", 0))),
-        })
-    return out
+            "open": number(open_),
+            "close": number(close),
+            "high": number(high),
+            "low": number(low),
+            "volume": number(volume),
+        }
+        for td, open_, close, high, low, volume in zip(
+            dates, opens, closes, highs, lows, volumes
+        )
+    ]
 
 
 def fetch_mootdx(code: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
@@ -121,17 +145,7 @@ def fetch_akshare(code: str, start_date: str, end_date: str) -> list[dict[str, A
         )
         if df is None or df.empty:
             return []
-        mapped = []
-        for _, row in df.iterrows():
-            mapped.append({
-                "trade_date": str(row.get("日期", ""))[:10],
-                "open": float(row.get("开盘", 0)),
-                "close": float(row.get("收盘", 0)),
-                "high": float(row.get("最高", 0)),
-                "low": float(row.get("最低", 0)),
-                "volume": float(row.get("成交量", 0)),
-            })
-        return mapped
+        return _rows_from_df(df, date_col="日期")
     except (ValueError, TypeError, KeyError, ConnectionError, OSError) as exc:
         logger.warning("akshare failed for %s: %s", code, exc)
         return []
@@ -173,35 +187,21 @@ def fetch_akshare_minute(
         if df is None or df.empty:
             return cached
         day_col = "day" if "day" in df.columns else df.columns[0]
-        fresh: list[dict[str, Any]] = []
-        for _, row in df.iterrows():
-            td = str(row[day_col])
-            if start_date and td[:10] < start_date[:10]:
-                continue
-            if end_date and td[:10] > end_date[:10]:
-                continue
-            fresh.append({
-                "trade_date": td,
-                "open": float(row.get("open", 0) or 0),
-                "high": float(row.get("high", 0) or 0),
-                "low": float(row.get("low", 0) or 0),
-                "close": float(row.get("close", 0) or 0),
-                "volume": float(row.get("volume", 0) or 0),
-            })
+        all_rows = _rows_from_df(
+            df,
+            date_col=day_col,
+            preserve_time=True,
+            null_to_zero=True,
+        )
+        fresh = [
+            row for row in all_rows
+            if (not start_date or row["trade_date"][:10] >= start_date[:10])
+            and (not end_date or row["trade_date"][:10] <= end_date[:10])
+        ]
         if use_cache and fresh:
             try:
                 from market.research_store import get_store
                 # store full fresh pull (unfiltered by start) for accumulation
-                all_rows = []
-                for _, row in df.iterrows():
-                    all_rows.append({
-                        "trade_date": str(row[day_col]),
-                        "open": float(row.get("open", 0) or 0),
-                        "high": float(row.get("high", 0) or 0),
-                        "low": float(row.get("low", 0) or 0),
-                        "close": float(row.get("close", 0) or 0),
-                        "volume": float(row.get("volume", 0) or 0),
-                    })
                 get_store().upsert_bars(code, period, all_rows)
             except Exception as exc:
                 logger.warning("bar cache save failed: %s", exc)

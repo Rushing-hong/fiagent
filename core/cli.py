@@ -110,7 +110,6 @@ def bootstrap(args: argparse.Namespace):
         ui.info(f"已清理 {len(purged)} 个超过 {RETENTION_DAYS} 天未更新的 session")
 
     ctx = AgentContext(PROJECT_ROOT)
-    ctx.refresh()
     current: SessionInfo | None = None
     messages: list[dict] = []
 
@@ -149,7 +148,6 @@ def _resolve_startup(store, ctx, args) -> tuple[SessionInfo | None, list[dict]]:
         set_last_session_id(info.id)
         return _load_session(store, ctx, info)
 
-    ctx.refresh()
     return None, ctx.fresh_messages()
 
 
@@ -158,7 +156,6 @@ def _load_session(store, ctx, info: SessionInfo) -> tuple[SessionInfo, list[dict
     if not messages:
         messages = ctx.fresh_messages()
     else:
-        ctx.refresh()
         ctx.sync_system_message(messages)
     set_last_session_id(info.id)
     return info, messages

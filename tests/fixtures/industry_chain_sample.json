@@ -1,0 +1,30 @@
+{
+  "companies": {
+    "601012.SH": {"name": "隆基绿能", "code": "601012.SH"},
+    "600438.SH": {"name": "通威股份", "code": "600438.SH"},
+    "688599.SH": {"name": "天合光能", "code": "688599.SH"}
+  },
+  "products": {
+    "工业硅": {},
+    "多晶硅": {},
+    "单晶硅片": {},
+    "光伏组件": {}
+  },
+  "industries": {
+    "光伏": {}
+  },
+  "edges": [
+    {"source": "工业硅", "target": "多晶硅", "relation": "上游材料"},
+    {"source": "多晶硅", "target": "单晶硅片", "relation": "上游材料"},
+    {"source": "单晶硅片", "target": "光伏组件", "relation": "上游材料"},
+    {"source": "隆基绿能", "target": "单晶硅片", "relation": "主营产品", "company_code": "601012.SH"},
+    {"source": "通威股份", "target": "多晶硅", "relation": "主营产品", "company_code": "600438.SH"},
+    {"source": "天合光能", "target": "光伏组件", "relation": "主营产品", "company_code": "688599.SH"},
+    {"source": "光伏", "target": "光伏组件", "relation": "下游应用"},
+    {"source": "光伏", "target": "单晶硅片", "relation": "下游应用"},
+    {"source": "通威股份", "target": "工业硅", "relation": "主营产品"},
+    {"source": "隆基绿能", "target": "光伏组件", "relation": "主营产品"},
+    {"source": "多晶硅", "target": "工业硅", "relation": "下游产品"},
+    {"source": "单晶硅片", "target": "多晶硅", "relation": "下游产品"}
+  ]
+}

@@ -11,9 +11,29 @@ from textual.widgets import TextArea
 
 
 class ChatScroll(VerticalScroll):
-    """聊天滚动区。"""
+    """聊天滚动区。
+
+    滚轮/键盘上滑时通知 App 取消粘底——事件常在此被消费，App 级 handler 收不到。
+    """
 
     ALLOW_MAXIMIZE = False
+
+    def _notify_scroll_away(self) -> None:
+        unpin = getattr(self.app, "_unpin_bottom", None)
+        if callable(unpin):
+            unpin()
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self._notify_scroll_away()
+        return super()._on_mouse_scroll_up(event)
+
+    def action_scroll_up(self) -> None:
+        self._notify_scroll_away()
+        return super().action_scroll_up()
+
+    def action_page_up(self) -> None:
+        self._notify_scroll_away()
+        return super().action_page_up()
 
 
 class PromptTextArea(TextArea):

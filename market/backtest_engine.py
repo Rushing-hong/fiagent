@@ -502,22 +502,18 @@ def compute_metrics(
     }
 
 
-def _bar_amount(row: pd.Series) -> float:
-    if "amount" in row.index and pd.notna(row.get("amount")):
-        try:
-            return float(row["amount"])
-        except (TypeError, ValueError):
-            pass
-    close = float(row.get("close") or 0)
-    vol = float(row.get("volume") or 0)
-    return close * vol
-
-
 def _prepare_adv(data: dict[str, pd.DataFrame], window: int) -> dict[str, pd.Series]:
     """Trailing mean of daily yuan volume for impact model."""
     out: dict[str, pd.Series] = {}
     for code, df in data.items():
-        amt = df.apply(_bar_amount, axis=1)
+        close = pd.to_numeric(df.get("close"), errors="coerce").fillna(0.0)
+        volume = pd.to_numeric(df.get("volume"), errors="coerce").fillna(0.0)
+        fallback = close * volume
+        if "amount" in df.columns:
+            reported = pd.to_numeric(df["amount"], errors="coerce")
+            amt = reported.where(reported.notna(), fallback)
+        else:
+            amt = fallback
         out[code] = amt.rolling(window, min_periods=max(1, window // 2)).mean()
     return out
 

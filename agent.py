@@ -1,14 +1,21 @@
-"""fiagent — DeepSeek ReAct Agent for A-share quantitative research.
+"""Atrading — DeepSeek ReAct Agent for A-share quantitative research.
 
 Usage:
-    python agent.py          # 默认 TUI
-    python agent.py --plain  # 纯终端
-    python agent.py --tui    # 强制 TUI
-    python agent.py --resume <id>  # 恢复 session
-    python agent.py --list   # 列出 sessions
+    atrading                 # 默认 TUI（需 pip install -e .）
+    atrading --plain         # 纯终端
+    atrading --tui           # 强制 TUI
+    atrading --resume <id>   # 恢复 session
+    atrading --list          # 列出 sessions
+    python -m atrading       # 等价入口
 """
 
 import sys
+
+from paths import PROJECT_ROOT
+
+# Flat layout: ensure repo root is on sys.path before importing siblings.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.cli import bootstrap, parse_args, resolve_ui_mode
 from core.commands import (
@@ -20,11 +27,7 @@ from core.commands import (
 )
 from core.loop import run_agent_turn
 from core.turn_control import TurnAborted
-from paths import PROJECT_ROOT
 from ui import ui
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def main_plain(args) -> None:

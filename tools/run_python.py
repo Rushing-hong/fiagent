@@ -6,14 +6,42 @@ as a single tool call (e.g., custom factor computation, data transformation).
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
 from typing import Any
 
 from tools._fs import PathError, resolve_path
 from tools.base import BaseTool
+
+# 子进程不继承含密钥/Token 的环境变量（S3）
+_SENSITIVE_ENV_RE = re.compile(
+    r"(API[_-]?KEY|ACCESS[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|CREDENTIAL)",
+    re.I,
+)
+_SENSITIVE_ENV_EXACT = frozenset({
+    "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "TUSHARE_TOKEN",
+    "FIAGENT_IWENCAI_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "HF_TOKEN",
+})
+
+
+def _sanitized_subprocess_env() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in _SENSITIVE_ENV_EXACT or _SENSITIVE_ENV_RE.search(key):
+            continue
+        out[key] = value
+    out["PYTHONUNBUFFERED"] = "1"
+    return out
 
 
 class RunPythonTool(BaseTool):
@@ -70,7 +98,7 @@ class RunPythonTool(BaseTool):
                 text=True,
                 timeout=timeout,
                 cwd=str(ctx.root),
-                env={**__import__("os").environ, "PYTHONUNBUFFERED": "1"},
+                env=_sanitized_subprocess_env(),
             )
         except subprocess.TimeoutExpired:
             return f"脚本执行超时 ({timeout}s)"

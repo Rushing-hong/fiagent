@@ -1,4 +1,4 @@
-"""fiagent TUI（Textual）。"""
+"""Atrading TUI (Textual)."""
 
 from ui.tui.app import run_tui
 

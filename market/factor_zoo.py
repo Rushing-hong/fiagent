@@ -23,6 +23,7 @@ ALPHA_FACTOR_IDS = (
     "alpha_mom_3m",
     "alpha_rev_5d",
     "alpha_rev_10d",
+    "alpha_overnight_5d",
     "alpha_vol_20d",
     "alpha_liquidity",
     "alpha_size",
@@ -44,6 +45,7 @@ ALPHA_SIGN_EXPECTATION: dict[str, int] = {
     "alpha_mom_3m": 1,
     "alpha_rev_5d": -1,      # 短期反转
     "alpha_rev_10d": -1,
+    "alpha_overnight_5d": -1,  # 隔夜收益偏彩票/反转假设
     "alpha_vol_20d": -1,     # 高波常惩罚
     "alpha_liquidity": -1,   # 高换手常惩罚（拥挤）
     "alpha_size": -1,        # 小市值溢价假设（A股常翻脸）
@@ -99,6 +101,23 @@ def _turnover(df: pd.DataFrame, i: int, window: int = 20) -> float:
     return float(vol.iloc[-1] / m)
 
 
+def _mean_overnight(df: pd.DataFrame, i: int, window: int = 5) -> float:
+    """Mean overnight return open_t / close_{t-1} - 1 over trailing window."""
+    if i < window:
+        return float("nan")
+    opens = df["open"].astype(float).iloc[i - window + 1 : i + 1]
+    prev_closes = df["close"].astype(float).iloc[i - window : i]
+    if len(opens) != len(prev_closes) or len(opens) == 0:
+        return float("nan")
+    rets = []
+    for o, c0 in zip(opens.tolist(), prev_closes.tolist()):
+        if c0 and c0 > 0 and np.isfinite(o) and np.isfinite(c0):
+            rets.append(o / c0 - 1.0)
+    if len(rets) < max(2, window // 2):
+        return float("nan")
+    return float(np.nanmean(rets))
+
+
 def cross_section_raw(
     data: dict[str, pd.DataFrame],
     date: pd.Timestamp,
@@ -126,6 +145,8 @@ def cross_section_raw(
             out[code] = _ret(df, i, 5)
         elif factor_id == "alpha_rev_10d":
             out[code] = _ret(df, i, 10)
+        elif factor_id == "alpha_overnight_5d":
+            out[code] = _mean_overnight(df, i, 5)
         elif factor_id in ("alpha_vol_20d", "risk_vol", "risk_residual_vol"):
             out[code] = _trailing_vol(df, i, 20)
         elif factor_id in ("alpha_liquidity", "risk_liquidity"):

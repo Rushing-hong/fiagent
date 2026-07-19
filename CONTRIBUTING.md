@@ -5,7 +5,7 @@
 1. 在 `tools/` 下创建 `your_tool.py`
 2. 继承 `BaseTool`，设置 `name` / `description` / `parameters` / `is_readonly`
 3. 实现 `execute(self, args, ctx) -> str` 方法
-4. 运行 `python agent.py` → 输入 `/reload` 即可自动发现
+4. 运行 `atrading` → 输入 `/reload` 即可自动发现
 
 ```python
 from tools.base import BaseTool

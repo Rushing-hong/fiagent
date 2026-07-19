@@ -1,4 +1,4 @@
-/* fiagent TUI — dark terminal, GitHub-inspired */
+/* Atrading TUI — dark terminal, GitHub-inspired */
 
 Screen {
     layout: vertical;
