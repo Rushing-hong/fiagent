@@ -83,6 +83,11 @@ class RunBacktestTool(BaseTool):
                 "description": "自定义信号文件路径 (strategy=custom 时必填)。CSV: index=date, columns=代码, values=-1~1",
             },
             "initial_cash": {"type": "number", "default": 1000000},
+            "position_pct": {
+                "type": "number",
+                "default": 0.95,
+                "description": "策略总多头仓位上限（0-1）；默认预留 5% 现金覆盖手续费与滑点",
+            },
             "commission": {"type": "number", "default": 0.0003},
             "stamp_duty": {"type": "number", "default": 0.0005},
             "after_hours": {
@@ -339,6 +344,7 @@ class RunBacktestTool(BaseTool):
 
         cfg = BacktestConfig(
             initial_cash=float(args.get("initial_cash", 1_000_000)),
+            position_pct=float(args.get("position_pct", 0.95)),
             commission=float(args.get("commission", 0.0003)),
             stamp_duty=float(args.get("stamp_duty", 0.0005)),
             after_hours=bool(args.get("after_hours", False)),

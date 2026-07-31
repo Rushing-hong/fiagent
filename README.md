@@ -2,13 +2,13 @@
 
 <p align="center">
   <b>A-share research agent — data, backtest, and trade review</b><br>
-  DeepSeek ReAct Agent · 60+ Tools · 50 Domain Skills · Dual UI
+  Multi-model ReAct Agent · 70+ Tools · 50 Domain Skills · Dual UI
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-  <img src="https://img.shields.io/badge/model-DeepSeek%20V4-purple" alt="Model">
+  <img src="https://img.shields.io/badge/models-DeepSeek%20%7C%20GLM%20%7C%20GPT%20%7C%20…-purple" alt="Models">
 </p>
 
 ---
@@ -47,34 +47,57 @@ git clone https://github.com/Rushing-hong/fiagent.git
 cd fiagent
 pip install -e .
 
-# 2. Set API Key (pick one)
-echo DEEPSEEK_API_KEY=sk-xxxxxxxx > .env   # Option A: write to .env
-set DEEPSEEK_API_KEY=sk-xxxxxxxx           # Option B: env var (prompted on first run)
+# 2. Set API Key (at least one provider)
+echo DEEPSEEK_API_KEY=sk-xxxxxxxx > .env   # default models use DeepSeek
+# Also supported (OpenAI-compatible): ZHIPU_API_KEY, MOONSHOT_API_KEY,
+# XAI_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY (+ BASE_URL)
+# See .env.example
 
-# 3. Launch
-atrading                 # Textual TUI — recommended
-atrading --plain         # Rich terminal mode
+# 3. Launch (pick one UI)
+atrading                 # saved preference (default TUI)
+atrading --tui           # Textual TUI
+atrading --plain         # Rich terminal
+atrading --web           # localhost HTML UI → http://127.0.0.1:8787
 # python -m atrading     # same entry without relying on PATH
 ```
 
-**In-chat commands**: `/help` `/new` `/sessions` `/resume <id>` `/reload` `/thinking` `/tui` `/plain`
+Switch models in-session with `/model` (or the model picker). Default remains DeepSeek V4 Pro/Flash; other vendors need their own `*_API_KEY` in `.env`. Claude expects an **OpenAI-compatible** `ANTHROPIC_BASE_URL` (gateway / proxy).
+
+**In-chat commands**: `/help` `/new` `/sessions` `/resume <id>` `/model` `/effort` `/reload` `/research` `/committee` `/review` `/thinking` `/tui` `/plain` `/web` `/quit`
 
 **Environment variables**:
 | Variable | Description |
 |------|------|
-| `DEEPSEEK_API_KEY` | DeepSeek API key (required) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (default provider) |
+| `ZHIPU_API_KEY` | GLM (Zhipu) |
+| `MOONSHOT_API_KEY` | Kimi |
+| `XAI_API_KEY` | Grok |
+| `OPENAI_API_KEY` | GPT / o-series |
+| `GEMINI_API_KEY` | Gemini (OpenAI-compatible endpoint) |
+| `ANTHROPIC_API_KEY` | Claude (pair with `ANTHROPIC_BASE_URL`) |
+| `*_BASE_URL` / `FIAGENT_*_BASE_URL` | Optional endpoint override per provider |
 | `FIAGENT_TZ` | Timezone, default `Asia/Shanghai` |
 | `FIAGENT_MAX_TOOL_ROUNDS` | Soft max agent steps (last step text-only), default 40 |
 | `FIAGENT_DOOM_LOOP_AT` | Reject tool after N identical name+args in a row, default 3 |
 | `FIAGENT_HTTP_RETRIES` | HTTP connection retries on disconnect/timeout, default 3 |
 | `FIAGENT_IWENCAI_KEY` | Hithink iwencai API key (optional) |
 | `FIAGENT_PLAIN_UI` | Set to `1` for plain terminal mode |
+| `FIAGENT_WEB_UI` | Set to `1` to prefer web UI |
+| `FIAGENT_WEB_PORT` | Web UI port, default `8787` |
+| `FIAGENT_WEB_NO_BROWSER` | Set to `1` to skip auto-opening the browser |
+| `FIAGENT_ENABLE_RUN_PYTHON` | Unsafe trusted-dev opt-in for arbitrary local Python; disabled by default |
+
+### Privacy and publishing
+
+- Keep API keys only in `.env`; it is git-ignored and must never be committed.
+- Session history, research SQLite databases, temporary data, and local research notes are excluded from releases.
+- `run_python` is disabled by default because an arbitrary local script has the same filesystem permissions as the desktop user. Enable it only in a trusted development workspace.
 
 ---
 
 ## Features
 
-### 40+ Tools — Four Markets
+### 70+ Tools — Four Markets
 
 | Market | Tools | Purpose |
 |------|------|------|
@@ -103,7 +126,7 @@ get_market_data → [built-in strategy OR custom signal] → run_backtest → pe
 
 4 built-in strategies (MA crossover / RSI / Momentum / Buy & Hold) + custom signal CSV / multi-sleeve mode.
 
-A-share realism (enabled by default where noted): T+1, limit-lock reject, next-bar open fill (`signal_lag=1`), √ impact cost, halt skip, optional cash interest, futures hedge, industry & style exposure caps. Optional near-term minute bars via `interval`. Roadmap: [docs/BACKTEST_ROADMAP.md](docs/BACKTEST_ROADMAP.md).
+A-share realism (enabled by default where noted): T+1, limit-lock reject, next-bar open fill (`signal_lag=1`), prior-bar ADV impact cost, 95% default gross-position cap for costs, halt skip, optional cash interest, futures hedge, industry & style exposure caps. Optional near-term minute bars via `interval`. Roadmap: [docs/BACKTEST_ROADMAP.md](docs/BACKTEST_ROADMAP.md).
 
 ### Trade Journal Analysis
 
@@ -113,7 +136,7 @@ Upload Hithink Flush / Eastmoney / Futu trade statements → automatic FIFO pair
 - **Behavioral diagnostics**: disposition effect, overtrading, chasing, anchoring bias
 - **Strategy style**: scalping / swing trading / long-term value / high-frequency
 
-### 49 Domain Skills
+### 50 Domain Skills
 
 Progressive disclosure — only summaries in the system prompt; the Agent loads full text via `load_skill` as needed. Coverage:
 
@@ -136,7 +159,7 @@ Progressive disclosure — only summaries in the system prompt; the Agent loads 
 ```
 User Input
   → Hooks (turn.start)
-  → core/loop  ReAct loop (max 10 rounds)
+  → core/loop  ReAct loop (default max 40 rounds; configurable)
        ├─ core/stream  Streaming DeepSeek V4 (reasoning + text + tool_calls)
        ├─ tools  Parallel readonly (8 workers) / serial writes
        ├─ Hooks (llm.before/after, tool.before/after)
@@ -154,8 +177,8 @@ Atrading/  # repo folder may still be fiagent
 ├── hooks/                # Pluggable event hooks
 ├── ui/                   # Rich terminal + Textual TUI
 ├── market/               # Data sources (Eastmoney/akshare) + backtesting engine
-├── tools/                # 40+ agent-callable tools
-├── skills/               # 49 domain skill documents
+├── tools/                # 70+ agent-callable tools
+├── skills/               # 50 domain skill documents
 ├── analysis/             # Factor analysis core algorithms
 ├── prompts/              # System prompt templates
 └── tests/                # Unit tests

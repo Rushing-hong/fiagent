@@ -5,26 +5,45 @@ from __future__ import annotations
 import json
 from typing import Literal
 
+from core.llm.catalog import (
+    DEFAULT_MODEL_ID,
+    get_model_spec,
+    list_model_ids,
+    list_models,
+    model_supports_thinking,
+)
 from paths import DATA_DIR
 
 PREFS_PATH = DATA_DIR / "ui_prefs.json"
 
 ThinkingMode = Literal["show", "hide"]
-UIMode = Literal["tui", "plain"]
-ModelId = Literal["deepseek-v4-pro", "deepseek-v4-flash"]
+UIMode = Literal["tui", "plain", "web"]
+ModelId = str
 ReasoningEffort = Literal["high", "max", "off"]
 
-AVAILABLE_MODELS: tuple[ModelId, ...] = ("deepseek-v4-pro", "deepseek-v4-flash")
+AVAILABLE_MODELS: tuple[str, ...] = list_model_ids()
 AVAILABLE_EFFORTS: tuple[ReasoningEffort, ...] = ("high", "max", "off")
 
-MODEL_LABELS: dict[str, str] = {
-    "deepseek-v4-pro": "Pro",
-    "deepseek-v4-flash": "Flash",
-}
+MODEL_LABELS: dict[str, str] = {m.id: m.label for m in list_models()}
 EFFORT_LABELS: dict[str, str] = {
     "high": "High",
     "max": "Max",
     "off": "关闭思考",
+}
+
+# Short aliases for /model (+ legacy ids remapped in catalog.LEGACY_MODEL_IDS)
+MODEL_ALIASES: dict[str, str] = {
+    "pro": "deepseek-v4-pro",
+    "flash": "deepseek-v4-flash",
+    "ds-pro": "deepseek-v4-pro",
+    "ds-flash": "deepseek-v4-flash",
+    "sol": "gpt-5.6-sol",
+    "terra": "gpt-5.6-terra",
+    "luna": "gpt-5.6-luna",
+    "k3": "kimi-k3",
+    "opus": "claude-opus-4-8",
+    "sonnet": "claude-sonnet-5",
+    "fable": "claude-fable-5",
 }
 
 
@@ -61,38 +80,80 @@ def toggle_thinking_mode() -> ThinkingMode:
 
 def get_ui_mode() -> UIMode:
     mode = load_prefs().get("ui_mode", "tui")
-    return mode if mode in ("tui", "plain") else "tui"
+    return mode if mode in ("tui", "plain", "web") else "tui"
 
 
 def set_ui_mode(mode: UIMode) -> UIMode:
+    if mode not in ("tui", "plain", "web"):
+        raise ValueError(f"未知界面模式: {mode}")
     prefs = load_prefs()
     prefs["ui_mode"] = mode
     save_prefs(prefs)
     return mode
 
 
-def ui_mode_label(mode: UIMode | None = None) -> str:
+def ui_mode_label(mode: UIMode | str | None = None) -> str:
     m = mode or get_ui_mode()
-    return "TUI" if m == "tui" else "纯终端"
+    return {"tui": "TUI", "plain": "纯终端", "web": "网页"}.get(m, str(m))
+
+
+def resolve_model_id(raw: str) -> str | None:
+    """Resolve alias, legacy id, or full model id; None if unknown."""
+    from core.llm.catalog import LEGACY_MODEL_IDS
+
+    key = (raw or "").strip()
+    if not key:
+        return None
+    low = key.lower()
+    if low in MODEL_ALIASES:
+        return MODEL_ALIASES[low]
+    if key in LEGACY_MODEL_IDS:
+        return LEGACY_MODEL_IDS[key]
+    if low in LEGACY_MODEL_IDS:
+        return LEGACY_MODEL_IDS[low]
+    if key in AVAILABLE_MODELS:
+        return key
+    if low in AVAILABLE_MODELS:
+        return low
+    return None
 
 
 def get_model() -> ModelId:
-    model = load_prefs().get("model", "deepseek-v4-pro")
-    return model if model in AVAILABLE_MODELS else "deepseek-v4-pro"
+    from core.llm.catalog import LEGACY_MODEL_IDS
+
+    model = load_prefs().get("model", DEFAULT_MODEL_ID)
+    if model in AVAILABLE_MODELS:
+        return model
+    if model in LEGACY_MODEL_IDS:
+        return LEGACY_MODEL_IDS[model]
+    return DEFAULT_MODEL_ID
 
 
 def set_model(model: str) -> ModelId:
-    if model not in AVAILABLE_MODELS:
+    resolved = resolve_model_id(model)
+    if resolved is None:
         raise ValueError(f"未知模型: {model}")
     prefs = load_prefs()
-    prefs["model"] = model
+    prefs["model"] = resolved
     save_prefs(prefs)
-    return model  # type: ignore[return-value]
+    return resolved
 
 
 def model_label(model: str | None = None) -> str:
     m = model or get_model()
     return MODEL_LABELS.get(m, m)
+
+
+def model_group(model: str | None = None) -> str:
+    m = model or get_model()
+    try:
+        return get_model_spec(m).group
+    except KeyError:
+        return ""
+
+
+def current_model_supports_thinking() -> bool:
+    return model_supports_thinking(get_model())
 
 
 def get_reasoning_effort() -> ReasoningEffort:
@@ -140,7 +201,6 @@ ALWAYS_ON_TOOLS: frozenset[str] = frozenset({
     "grep",
     "write",
     "edit",
-    "run_python",
     "get_current_time",
 })
 

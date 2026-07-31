@@ -88,7 +88,8 @@ class BacktestConfig:
     transfer_fee: float = 0.00001
     min_commission: float = 5.0
 
-    position_pct: float = 1.0
+    # Reserve cash for commissions/slippage so a default full signal can fill.
+    position_pct: float = 0.95
     max_positions: int = 10
 
     slippage: float = 0.001
@@ -217,8 +218,12 @@ class Broker:
         # A股 T+1：按交易日（normalize），分钟线不得同日卖出
         return pd.Timestamp(date).normalize() > pd.Timestamp(lock_until).normalize()
 
-    def can_buy(self) -> bool:
-        return self.cash > 0 and len(self.positions) < self.cfg.max_positions
+    def can_buy(self, code: str) -> bool:
+        # Increasing an existing holding must not be blocked merely because the
+        # portfolio already has the maximum number of distinct names.
+        return self.cash > 0 and (
+            code in self.positions or len(self.positions) < self.cfg.max_positions
+        )
 
     def _apply_price_limit(self, code: str, target_price: float, prev_close: float) -> float:
         limit = _limit_pct(code)
@@ -280,7 +285,7 @@ class Broker:
                     "reason": "insufficient_cash", "qty": order.quantity,
                 })
                 return "insufficient_cash"
-            if not self.can_buy():
+            if not self.can_buy(code):
                 self.reject_log.append({
                     "date": str(date.date()), "code": code, "side": "buy",
                     "reason": "position_limit", "qty": order.quantity,
@@ -514,7 +519,9 @@ def _prepare_adv(data: dict[str, pd.DataFrame], window: int) -> dict[str, pd.Ser
             amt = reported.where(reported.notna(), fallback)
         else:
             amt = fallback
-        out[code] = amt.rolling(window, min_periods=max(1, window // 2)).mean()
+        # A trade on this bar cannot know the bar's final turnover.  Use only
+        # completed prior bars for impact estimation.
+        out[code] = amt.rolling(window, min_periods=max(1, window // 2)).mean().shift(1)
     return out
 
 
@@ -667,9 +674,16 @@ class BacktestEngine:
                     if code in signal.columns:
                         current_sig[code] = float(signal.loc[sig_date, code])
 
+            position_cap = min(1.0, max(0.0, float(self.cfg.position_pct)))
             raw_w = {
-                c: max(0.0, current_sig.get(c, 0.0)) * self.cfg.position_pct for c in codes
+                c: max(0.0, current_sig.get(c, 0.0)) * position_cap for c in codes
             }
+            # Signals are per-name and can sum to more than one.  Normalize
+            # only overweight books so intentionally underweight signals stay
+            # underweight while gross exposure never exceeds the configured cap.
+            gross_weight = sum(raw_w.values())
+            if gross_weight > position_cap > 0:
+                raw_w = {c: w * position_cap / gross_weight for c, w in raw_w.items()}
             if self.cfg.max_industry_weight is not None and ind_map:
                 raw_w = apply_industry_cap(
                     raw_w, ind_map, float(self.cfg.max_industry_weight)
@@ -862,6 +876,7 @@ class BacktestEngine:
                 "initial_cash": self.cfg.initial_cash,
                 "commission": self.cfg.commission,
                 "stamp_duty": self.cfg.stamp_duty,
+                "position_pct": self.cfg.position_pct,
                 "strategy": strategy or ("sleeves" if sleeves else "custom_signal"),
                 "codes": codes,
                 "date_range": f"{all_dates[0].date()} ~ {all_dates[-1].date()}",

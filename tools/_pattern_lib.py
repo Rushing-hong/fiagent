@@ -83,6 +83,18 @@ def find_peaks_valleys(close: pd.Series, window: int = 5) -> dict[str, list[int]
         if values[i] == np.min(seg):
             valleys.append(i)
 
+    # A trend's first support and last resistance cannot have a full window on
+    # both sides.  Include them when they are confirmed by the available edge
+    # window, while avoiding flat segments being labeled as extrema.
+    head = values[: window + 1]
+    if not np.isnan(values[0]) and np.isfinite(head).any():
+        if values[0] == np.nanmin(head) and values[0] < np.nanmax(head):
+            valleys.insert(0, 0)
+    tail = values[-(window + 1) :]
+    if not np.isnan(values[-1]) and np.isfinite(tail).any():
+        if values[-1] == np.nanmax(tail) and values[-1] > np.nanmin(tail):
+            peaks.append(n - 1)
+
     return {"peaks": peaks, "valleys": valleys}
 
 

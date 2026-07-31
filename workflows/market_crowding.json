@@ -1,0 +1,7 @@
+{
+  "id": "market_crowding",
+  "description": "市场/板块拥挤度与风格",
+  "triggers": ["拥挤", "板块机会", "行业研究", "板块研究", "风格"],
+  "agents": ["data_guardian", "market_regime", "red_team"],
+  "parallel_researchers": ["market_regime"]
+}

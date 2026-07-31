@@ -28,6 +28,7 @@ class SessionInfo:
     created_at: str
     updated_at: str
     message_count: int = 0
+    match_snippet: str | None = None
 
 
 class SessionStore:
@@ -131,6 +132,90 @@ class SessionStore:
             )
             for row in rows
         ]
+
+    @staticmethod
+    def _like_pattern(query: str) -> str:
+        # Escape LIKE wildcards so user input is literal.
+        escaped = (
+            query.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        return f"%{escaped}%"
+
+    def search_sessions(self, query: str, limit: int = 40) -> list[SessionInfo]:
+        """按标题、会话 ID、消息正文搜索对话。"""
+        q = (query or "").strip()
+        if not q:
+            return self.list_sessions(limit=limit)
+
+        pat = self._like_pattern(q)
+        conn = self._connection()
+        rows = conn.execute(
+            """
+            SELECT s.id, s.title, s.created_at, s.updated_at,
+                   COUNT(CASE WHEN m.role != 'system' THEN 1 END) AS message_count
+            FROM sessions s
+            LEFT JOIN messages m ON m.session_id = s.id
+            WHERE s.title LIKE ? ESCAPE '\\'
+               OR s.id LIKE ? ESCAPE '\\'
+               OR EXISTS (
+                    SELECT 1 FROM messages m2
+                    WHERE m2.session_id = s.id
+                      AND m2.role IN ('user', 'assistant', 'tool')
+                      AND (
+                        IFNULL(m2.content, '') LIKE ? ESCAPE '\\'
+                        OR IFNULL(m2.reasoning_content, '') LIKE ? ESCAPE '\\'
+                      )
+               )
+            GROUP BY s.id
+            ORDER BY s.updated_at DESC
+            LIMIT ?
+            """,
+            (pat, pat, pat, pat, limit),
+        ).fetchall()
+
+        out: list[SessionInfo] = []
+        for row in rows:
+            snippet = None
+            title = row["title"] or ""
+            if q.lower() in title.lower() or q.lower() in str(row["id"]).lower():
+                snippet = None
+            else:
+                hit = conn.execute(
+                    """
+                    SELECT content FROM messages
+                    WHERE session_id = ?
+                      AND role IN ('user', 'assistant')
+                      AND IFNULL(content, '') LIKE ? ESCAPE '\\'
+                    ORDER BY sort_order DESC
+                    LIMIT 1
+                    """,
+                    (row["id"], pat),
+                ).fetchone()
+                if hit and hit["content"]:
+                    text = " ".join(str(hit["content"]).split())
+                    low = text.lower()
+                    key = q.lower()
+                    idx = low.find(key)
+                    if idx < 0:
+                        snippet = text[:80]
+                    else:
+                        start = max(0, idx - 24)
+                        end = min(len(text), idx + len(q) + 40)
+                        snippet = (("…" if start else "") + text[start:end]
+                                   + ("…" if end < len(text) else ""))
+            out.append(
+                SessionInfo(
+                    id=row["id"],
+                    title=row["title"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    message_count=row["message_count"],
+                    match_snippet=snippet,
+                )
+            )
+        return out
 
     def get(self, session_id: str) -> SessionInfo | None:
         conn = self._connection()

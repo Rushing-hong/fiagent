@@ -1,9 +1,10 @@
 """Atrading — DeepSeek ReAct Agent for A-share quantitative research.
 
 Usage:
-    atrading                 # 默认 TUI（需 pip install -e .）
-    atrading --plain         # 纯终端
-    atrading --tui           # 强制 TUI
+    atrading                 # 默认按偏好（TUI / plain / web）
+    atrading --tui           # Textual TUI
+    atrading --plain         # 纯终端 Rich
+    atrading --web           # 本机网页 UI（默认 http://127.0.0.1:8787）
     atrading --resume <id>   # 恢复 session
     atrading --list          # 列出 sessions
     python -m atrading       # 等价入口
@@ -20,12 +21,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.cli import bootstrap, parse_args, resolve_ui_mode
 from core.commands import (
     HANDLED_REEXEC,
+    HANDLED_QUIT,
     HANDLED_RESTART,
     SESSION_COMMANDS,
     handle_session_command,
     reexec_self,
 )
-from core.loop import run_agent_turn
+from core.agents.dispatch import dispatch_turn
 from core.turn_control import TurnAborted
 from ui import ui
 
@@ -61,29 +63,40 @@ def main_plain(args) -> None:
                 continue
 
             if user_input.startswith("/"):
-                current, new_messages, handled = handle_session_command(
-                    user_input, store, ctx, current
+                low = user_input.strip().lower()
+                is_agent_team = (
+                    low.startswith("/research")
+                    or low.startswith("/committee")
+                    or low.startswith("/review")
                 )
-                if not handled:
-                    ui.warn(f"未知命令: {user_input}，输入 /help 查看帮助")
-                elif handled in (HANDLED_REEXEC, HANDLED_RESTART):
-                    reexec_resume = current.id if current else None
-                    break
-                else:
-                    if new_messages is not None:
-                        messages = new_messages
-                        ui.show_startup(
-                            session_id=current.id if current else None,
-                            session_title=current.title if current else "新对话",
-                            skills=[s.name for s in ctx.skills.all()],
-                            hooks=loaded_hooks,
-                            current_time=ctx.format_now(),
-                            ui_mode="plain",
-                        )
-                        ui.hydrate_messages(messages)
-                    elif user_input.strip().lower() == "/reload":
-                        ctx.sync_system_message(messages)
-                continue
+                if not is_agent_team:
+                    current, new_messages, handled = handle_session_command(
+                        user_input, store, ctx, current
+                    )
+                if not is_agent_team:
+                    if not handled:
+                        ui.warn(f"未知命令: {user_input}，输入 /help 查看帮助")
+                    elif handled == HANDLED_QUIT:
+                        ui.goodbye()
+                        break
+                    elif handled in (HANDLED_REEXEC, HANDLED_RESTART):
+                        reexec_resume = current.id if current else None
+                        break
+                    else:
+                        if new_messages is not None:
+                            messages = new_messages
+                            ui.show_startup(
+                                session_id=current.id if current else None,
+                                session_title=current.title if current else "新对话",
+                                skills=[s.name for s in ctx.skills.all()],
+                                hooks=loaded_hooks,
+                                current_time=ctx.format_now(),
+                                ui_mode="plain",
+                            )
+                            ui.hydrate_messages(messages)
+                        elif user_input.strip().lower() == "/reload":
+                            ctx.sync_system_message(messages)
+                    continue
 
             turn_ctx = hooks.emit("turn.start", {
                 "input": user_input,
@@ -99,7 +112,7 @@ def main_plain(args) -> None:
             messages.append({"role": "user", "content": user_input})
 
             try:
-                run_agent_turn(client, messages, ctx, hooks)
+                dispatch_turn(client, messages, ctx, hooks, user_input)
                 if current is None:
                     current = store.create()
                     store.auto_title(current.id, user_input)
@@ -141,10 +154,28 @@ def main():
         s.close()
         return
 
-    use_plain = resolve_ui_mode(args)
+    mode = resolve_ui_mode(args)
 
-    if use_plain:
+    if mode == "plain":
         main_plain(args)
+        return
+
+    if mode == "web":
+        client, hooks, store, ctx, current, messages, loaded_hooks = bootstrap(args)
+        from ui.web import run_web
+
+        run_web(
+            client=client,
+            ctx=ctx,
+            hooks=hooks,
+            store=store,
+            messages=messages,
+            current=current,
+            loaded_hooks=loaded_hooks,
+            session_commands=SESSION_COMMANDS,
+            handle_command=handle_session_command,
+            args=args,
+        )
         return
 
     try:

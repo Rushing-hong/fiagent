@@ -1,0 +1,7 @@
+{
+  "id": "strategy_backtest",
+  "description": "策略回测与量化验证",
+  "triggers": ["回测", "双均线", "策略诊断", "因子分析", "walk-forward"],
+  "agents": ["data_guardian", "quant_research", "red_team"],
+  "parallel_researchers": ["quant_research"]
+}

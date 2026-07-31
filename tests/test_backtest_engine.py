@@ -103,6 +103,16 @@ def test_signal_lag_delays_entry():
     assert r0["metrics"]["total_trades"] >= 0
 
 
+def test_default_buy_hold_reserves_cost_buffer_and_fills():
+    df = _ohlcv(30)
+    result = BacktestEngine(BacktestConfig(use_impact_model=False, reject_limit_lock=False)).run(
+        {"600519.SH": df}, strategy="buy_hold"
+    )
+    assert result["ok"]
+    assert result["config"]["position_pct"] == 0.95
+    assert result["metrics"]["total_trades"] >= 1
+
+
 def test_halt_skips_missing_bar_and_cash_interest():
     df = _ohlcv(20)
     # punch a hole mid-series → halt

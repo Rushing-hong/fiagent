@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "trade_review",
+  "display_name": "Trade Review",
+  "system_prompt_file": "prompts/agents/trade_review.md",
+  "max_tool_rounds": 14,
+  "allowed_tools": [
+    "load_skill",
+    "analyze_trade_journal",
+    "get_trading_rules",
+    "get_current_time",
+    "read",
+    "grep"
+  ],
+  "allowed_skills": [
+    "trade-journal"
+  ]
+}

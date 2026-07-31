@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "data_guardian",
+  "display_name": "Data Guardian",
+  "system_prompt_file": "prompts/agents/data_guardian.md",
+  "max_tool_rounds": 12,
+  "allowed_tools": [
+    "search_symbol",
+    "get_trade_calendar",
+    "get_current_time",
+    "get_trading_rules",
+    "get_market_data",
+    "load_pit_universe",
+    "build_tradable_universe",
+    "load_skill",
+    "read",
+    "grep"
+  ],
+  "allowed_skills": [
+    "data-routing"
+  ]
+}

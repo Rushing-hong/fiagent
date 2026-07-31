@@ -11,10 +11,14 @@ from core.loop import _norm_args, run_tool_with_hooks
 
 
 class _Ctx:
+    def __init__(self):
+        self.calls = 0
+
     def is_repeatable_tool(self, name: str) -> bool:
         return True
 
     def execute_tool(self, name: str, arguments: str) -> str:
+        self.calls += 1
         return f"ok:{name}:{arguments}"
 
 
@@ -27,7 +31,7 @@ def test_norm_args_stable_json():
     assert _norm_args('{"b":1,"a":2}') == _norm_args('{"a": 2, "b": 1}')
 
 
-def test_doom_loop_rejects_third_identical_call():
+def test_doom_loop_rejects_third_identical_call_before_execution():
     ctx = _Ctx()
     hooks = _Hooks()
     counts: dict[str, int] = {}
@@ -39,6 +43,7 @@ def test_doom_loop_rejects_third_identical_call():
     assert r1.startswith("ok:")
     assert r2.startswith("ok:")
     assert "doom_loop" in r3
+    assert ctx.calls == 2
     # different args still works
     r4 = run_tool_with_hooks(hooks, ctx, "screen_market", '{"x":2}', counts, recent)
     assert r4.startswith("ok:")

@@ -16,11 +16,47 @@ def on_turn_start(ctx: HookContext) -> HookContext:
 
 
 def on_llm_before(ctx: HookContext) -> HookContext:
+    try:
+        from research.run_context import get_run_context
+        from ui.web.agent_progress import emit_agent_progress
+
+        rc = get_run_context()
+        if rc and rc.agent_name and rc.agent_name != "orchestrator":
+            emit_agent_progress({
+                "phase": "agent_ui",
+                "run_id": rc.run_id,
+                "agent": rc.agent_name,
+                "ui_type": "hook",
+                "tag": "llm.before",
+                "message": f"第 {ctx.get('round_idx')} 轮 LLM 调用",
+            })
+            return ctx
+    except ImportError:
+        pass
     ui.hook_log("llm.before", f"第 {ctx.get('round_idx')} 轮 LLM 调用")
     return ctx
 
 
 def on_llm_after(ctx: HookContext) -> HookContext:
+    try:
+        from research.run_context import get_run_context
+        from ui.web.agent_progress import emit_agent_progress
+
+        rc = get_run_context()
+        if rc and rc.agent_name and rc.agent_name != "orchestrator":
+            msg = ctx.get("message")
+            tool_count = len(msg.tool_calls) if msg and msg.tool_calls else 0
+            emit_agent_progress({
+                "phase": "agent_ui",
+                "run_id": rc.run_id,
+                "agent": rc.agent_name,
+                "ui_type": "hook",
+                "tag": "llm.after",
+                "message": f"工具调用数: {tool_count}",
+            })
+            return ctx
+    except ImportError:
+        pass
     msg = ctx.get("message")
     tool_count = len(msg.tool_calls) if msg and msg.tool_calls else 0
     ui.hook_log("llm.after", f"工具调用数: {tool_count}")
@@ -28,11 +64,45 @@ def on_llm_after(ctx: HookContext) -> HookContext:
 
 
 def on_tool_before(ctx: HookContext) -> HookContext:
+    try:
+        from research.run_context import get_run_context
+        from ui.web.agent_progress import emit_agent_progress
+
+        rc = get_run_context()
+        if rc and rc.agent_name and rc.agent_name != "orchestrator":
+            emit_agent_progress({
+                "phase": "agent_ui",
+                "run_id": rc.run_id,
+                "agent": rc.agent_name,
+                "ui_type": "hook",
+                "tag": "tool.before",
+                "message": ctx.get("name", "?"),
+            })
+            return ctx
+    except ImportError:
+        pass
     ui.hook_log("tool.before", ctx.get("name", "?"))
     return ctx
 
 
 def on_tool_after(ctx: HookContext) -> HookContext:
+    try:
+        from research.run_context import get_run_context
+        from ui.web.agent_progress import emit_agent_progress
+
+        rc = get_run_context()
+        if rc and rc.agent_name and rc.agent_name != "orchestrator":
+            emit_agent_progress({
+                "phase": "agent_ui",
+                "run_id": rc.run_id,
+                "agent": rc.agent_name,
+                "ui_type": "hook",
+                "tag": "tool.after",
+                "message": ctx.get("name", "?"),
+            })
+            return ctx
+    except ImportError:
+        pass
     ui.hook_log("tool.after", ctx.get("name", "?"))
     return ctx
 
