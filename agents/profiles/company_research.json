@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "company_research",
+  "display_name": "Company Research",
+  "system_prompt_file": "prompts/agents/company_research.md",
+  "max_tool_rounds": 16,
+  "allowed_tools": [
+    "load_skill",
+    "get_financial_statements",
+    "calc_dupont",
+    "check_red_flags",
+    "screen_peers",
+    "calc_dcf",
+    "track_consensus",
+    "get_research_reports",
+    "get_stock_news",
+    "get_shareholder_count",
+    "get_lockup_expiry",
+    "get_insider_trades",
+    "get_block_trades",
+    "get_market_data",
+    "search_symbol",
+    "get_current_time"
+  ],
+  "allowed_skills": [
+    "financial-statement",
+    "valuation-model",
+    "earnings-analysis",
+    "dividend-analysis",
+    "corporate-events"
+  ]
+}

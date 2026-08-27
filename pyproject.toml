@@ -45,4 +45,20 @@ include = [
     "signals*",
     "mcps*",
     "skills*",
+    "research*",
+    "policy*",
+    "evals*",
+    "agents*",
+    "prompts*",
+    "workflows*",
 ]
+
+[tool.setuptools.package-data]
+"ui.web" = ["static/*", "static/assets/*"]
+"agents" = ["profiles/*.json"]
+"prompts" = ["base.md", "agents/*.md"]
+"skills" = ["**/*"]
+"workflows" = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

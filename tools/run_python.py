@@ -44,13 +44,28 @@ def _sanitized_subprocess_env() -> dict[str, str]:
     return out
 
 
+def _unsafe_execution_enabled() -> bool:
+    """Whether an operator explicitly enabled arbitrary local Python execution.
+
+    This is intentionally opt-in: a subprocess can read or modify any file the
+    desktop user can access, which cannot be made safe merely by filtering its
+    environment variables.
+    """
+    return os.environ.get("FIAGENT_ENABLE_RUN_PYTHON", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 class RunPythonTool(BaseTool):
     name = "run_python"
-    summary = "执行工作区内的 Python 脚本"
+    summary = "执行工作区内的 Python 脚本（需显式开启）"
     description = (
         "运行工作区内的 Python 脚本文件。用于执行自定义计算（因子生成、"
         "信号计算、数据格式转换等）。脚本输出到 stdout 的内容会被捕获返回。\n"
-        "注意: 脚本文件必须先通过 write 工具创建。"
+        "注意: 此功能会以当前用户权限执行任意代码，默认关闭。仅在受信任的"
+        "本地开发环境中设置 FIAGENT_ENABLE_RUN_PYTHON=1 后使用。"
     )
     parameters = {
         "type": "object",
@@ -77,7 +92,13 @@ class RunPythonTool(BaseTool):
     is_readonly = False
     repeatable = False
 
+    @classmethod
+    def check_available(cls) -> bool:
+        return _unsafe_execution_enabled()
+
     def execute(self, args: dict[str, Any], ctx: Any) -> str:
+        if not _unsafe_execution_enabled():
+            return "run_python 默认关闭：它可读取或修改当前用户有权限的文件。仅受信任环境可设置 FIAGENT_ENABLE_RUN_PYTHON=1 显式开启。"
         try:
             file_path = resolve_path(ctx, str(args.get("file", "")))
         except PathError as e:
@@ -93,7 +114,7 @@ class RunPythonTool(BaseTool):
 
         try:
             result = subprocess.run(
-                [sys.executable, str(file_path)] + [str(a) for a in script_args],
+                [sys.executable, "-I", str(file_path)] + [str(a) for a in script_args],
                 capture_output=True,
                 text=True,
                 timeout=timeout,

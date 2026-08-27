@@ -147,6 +147,16 @@ def prev_trading_day(d: str | date | datetime, *, n: int = 1) -> str | None:
     return days[index]
 
 
+def latest_trading_day(d: str | date | datetime | None = None) -> str | None:
+    """最近一个不超过 d（默认今天）的交易日。"""
+    ymd = _to_ymd(d or datetime.now())
+    days = _cached_days()
+    index = bisect.bisect_right(days, ymd) - 1
+    if index < 0:
+        return None
+    return days[index]
+
+
 def session_hint(d: str | date | datetime | None = None) -> dict[str, object]:
     """Rough session info for Agent (half-day not yet modeled from free source)."""
     ymd = _to_ymd(d or datetime.now())

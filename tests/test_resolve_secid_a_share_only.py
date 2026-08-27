@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 from market.eastmoney import resolve_secid
+from market.symbol_search import parse_tencent_suggest
 from tools.stock_market import SearchSymbolTool, _as_bool, _clist_get
 
 
@@ -40,6 +41,28 @@ def test_search_symbol_maps_bj_and_skips_non_ashare():
     assert "830799.BJ" in out
     assert "00700" not in out
     assert "AAPL" not in out
+
+
+def test_parse_tencent_suggest_keeps_a_shares_only():
+    raw = (
+        'v_hint="sz~000063~\\u4e2d\\u5174\\u901a\\u8baf~zxtx~GP-A'
+        '^hk~00763~\\u4e2d\\u5174\\u901a\\u8baf~zxtx~GP"'
+    )
+    assert parse_tencent_suggest(raw) == [
+        {"symbol": "000063.SZ", "name": "中兴通讯", "source": "tencent"}
+    ]
+
+
+def test_search_symbol_falls_back_to_tencent():
+    fallback = [{"symbol": "000063.SZ", "name": "中兴通讯", "source": "tencent"}]
+    with (
+        patch("tools.stock_market.search_suggest", side_effect=ValueError("bad json")),
+        patch("tools.stock_market.search_tencent_suggest", return_value=fallback),
+    ):
+        out = SearchSymbolTool().execute({"query": "中兴通讯"}, None)
+    assert '"ok": true' in out
+    assert "000063.SZ" in out
+    assert '"source": "tencent"' in out
 
 
 def test_clist_get_tries_next_host_on_empty_diff():

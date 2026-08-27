@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "orchestrator",
+  "display_name": "CIO",
+  "system_prompt_file": "prompts/agents/orchestrator.md",
+  "max_tool_rounds": 8,
+  "allowed_tools": [
+    "load_skill",
+    "read",
+    "read_agent_report",
+    "list_run_evidence",
+    "list_validated_lessons"
+  ],
+  "allowed_skills": []
+}

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
+from core.config import env_int
+
 # DeepSeek V4 API 官方上下文为 1M；可用环境变量覆盖
-DEFAULT_CONTEXT_TOKENS = int(os.environ.get("FIAGENT_CONTEXT_TOKENS", "1000000"))
+DEFAULT_CONTEXT_TOKENS = env_int(
+    "FIAGENT_CONTEXT_TOKENS", 1_000_000, minimum=1_000, maximum=10_000_000
+)
 
 
 def _chars_of(value: Any) -> int:

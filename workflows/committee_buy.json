@@ -1,0 +1,7 @@
+{
+  "id": "committee_buy",
+  "description": "买入/组合决策 — 全委员会",
+  "triggers": ["是否买入", "该不该买", "投资组合", "仓位"],
+  "agents": ["data_guardian", "company_research", "market_regime", "quant_research", "red_team"],
+  "parallel_researchers": ["company_research", "market_regime", "quant_research"]
+}

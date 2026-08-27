@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "red_team",
+  "display_name": "Red-Team",
+  "system_prompt_file": "prompts/agents/red_team.md",
+  "max_tool_rounds": 1,
+  "allowed_tools": [],
+  "allowed_skills": []
+}

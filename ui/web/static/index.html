@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atrading</title>
+  <link rel="icon" href="/static/assets/atrading-pixel-mark.png" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/desk.css?v=20260810c" />
+  <script defer src="/static/marked.min.js?v=12.0.2"></script>
+  <script defer src="/static/desk.js?v=20260810c"></script>
+  <script defer src="/static/desk-collaboration.js?v=20260810c"></script>
+</head>
+<body>
+  <div id="connection-banner" class="connection-banner hidden" role="status" aria-live="polite">
+    <span class="connection-dot" aria-hidden="true"></span>
+    <span id="connection-message">与本地服务的连接已中断</span>
+    <button type="button" id="connection-retry">立即重试</button>
+  </div>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <section id="welcome">
+    <div class="welcome-inner">
+      <img class="welcome-logo" src="/static/assets/atrading-pixel-mark.png" width="72" height="72" alt="" />
+      <h1 id="welcome-title">Atrading</h1>
+      <p class="sub" id="welcome-sub">A股投研助手 · 行情 · 回测 · 复盘</p>
+      <div id="welcome-health" class="welcome-health checking" role="status">
+        <span class="health-dot" aria-hidden="true"></span>
+        <span id="welcome-health-main">正在检查模型配置…</span>
+        <span id="welcome-health-detail"></span>
+      </div>
+      <div class="examples" id="examples"></div>
+      <div class="welcome-actions">
+        <button type="button" class="btn btn-primary" id="btn-new">开始新会话</button>
+        <button type="button" class="btn btn-ghost" id="btn-continue">继续上次</button>
+        <button type="button" class="btn btn-ghost" id="btn-history">进入工作台</button>
+        <button type="button" class="btn btn-ghost" id="btn-model" title="切换模型 / 查看 Key 状态">配置模型</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="app" class="hidden">
+    <div class="tape" aria-hidden="true">
+      <div class="tape-inner" id="tape-inner"></div>
+    </div>
+
+    <div class="desk">
+      <aside id="sidebar" class="sidebar" aria-label="侧边栏">
+        <div class="sb-brand">
+          <img src="/static/assets/atrading-pixel-mark.png" width="24" height="24" alt="" />
+          <span id="app-name">Atrading</span>
+          <button type="button" class="sb-toggle" id="sidebar-close" title="收起">‹</button>
+        </div>
+
+        <div class="sb-section">
+          <div class="sb-label">快捷</div>
+          <nav class="sb-nav" id="sb-features">
+            <button type="button" data-feature="screen" title="涨跌幅榜">涨跌榜</button>
+            <button type="button" data-feature="limit" title="涨停板复盘">涨停板</button>
+            <button type="button" data-feature="fund" title="基本面选股">选股</button>
+            <button type="button" data-feature="backtest" title="策略回测">回测</button>
+            <button type="button" data-feature="collaboration" title="查看协作任务">协作任务</button>
+            <button type="button" data-feature="evals" title="A/B/C/D 评估">评估</button>
+          </nav>
+        </div>
+
+        <div class="sb-section">
+          <div class="sb-label">功能</div>
+          <nav class="sb-nav" id="sb-actions">
+            <button type="button" data-action="new" title="新建对话">＋ 新建对话</button>
+            <button type="button" data-action="model" title="切换模型">模型</button>
+            <button type="button" data-action="effort" title="思考强度">思考强度</button>
+            <button type="button" data-action="tools" title="管理工具">工具</button>
+            <button type="button" data-action="skills" title="管理 Skills">Skills</button>
+            <button type="button" data-action="mcp" title="管理 MCP">MCP</button>
+            <button type="button" data-action="palette" title="Ctrl+P">⌘ 命令面板</button>
+            <button type="button" data-action="about" title="产品介绍与用法">介绍</button>
+          </nav>
+        </div>
+
+        <div class="sb-section sb-sessions-wrap">
+          <div class="sb-label-row">
+            <div class="sb-label">对话</div>
+            <button type="button" class="sb-link" id="btn-refresh-sessions" title="刷新">刷新</button>
+          </div>
+          <input
+            type="search"
+            id="session-search"
+            class="sb-search"
+            placeholder="搜索标题或聊天内容…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="sb-sessions" id="session-list"></div>
+        </div>
+      </aside>
+
+      <div class="main-col">
+        <header class="top">
+          <button type="button" class="sb-open" id="sidebar-open" title="侧边栏">☰</button>
+          <div class="meta" id="meta">Session</div>
+          <button type="button" class="top-cmd" id="btn-palette" title="Ctrl+P">Ctrl+P</button>
+          <button type="button" class="top-cmd rail-open" id="rail-open" title="右侧检视">检视</button>
+        </header>
+
+        <main id="chat" aria-live="polite"></main>
+
+        <section id="collaboration-view" class="collaboration-view hidden" aria-hidden="true">
+          <div class="collaboration-view-head">
+            <button type="button" class="collaboration-back" id="collaboration-back">← 主对话</button>
+            <div class="collaboration-heading">
+              <div class="collaboration-eyebrow">AGENT TASK</div>
+              <h2 id="collaboration-title">协作任务</h2>
+              <p id="collaboration-subtitle">选择一个子 Agent 查看执行过程</p>
+            </div>
+            <button type="button" class="collaboration-refresh" id="collaboration-refresh" title="刷新任务详情">刷新</button>
+          </div>
+          <div class="collaboration-layout">
+            <nav class="collaboration-nav" aria-label="子 Agent 列表">
+              <div class="collaboration-run-summary" id="collaboration-run-summary"></div>
+              <div class="collaboration-agent-list" id="collaboration-agent-list"></div>
+            </nav>
+            <article class="collaboration-thread">
+              <header class="collaboration-thread-head" id="collaboration-thread-head"></header>
+              <div class="collaboration-timeline" id="collaboration-timeline"></div>
+            </article>
+          </div>
+        </section>
+
+        <div class="composer-wrap">
+          <div id="composer-activity" class="composer-activity hidden" aria-live="polite">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="composer-activity-text">运行中…</span>
+          </div>
+          <div class="collaboration-toolbar" id="collaboration-toolbar">
+            <button type="button" class="collaboration-trigger" id="collaboration-trigger" aria-haspopup="menu" aria-expanded="false">
+              <span aria-hidden="true">＋</span> Agent 协作
+            </button>
+            <div class="collaboration-selection hidden" id="collaboration-selection">
+              <span class="collaboration-selection-dot" aria-hidden="true"></span>
+              <span id="collaboration-selection-label"></span>
+              <span class="collaboration-selection-note">仅下一条消息</span>
+              <button type="button" id="collaboration-clear" title="取消协作">×</button>
+            </div>
+            <div class="collaboration-menu hidden" id="collaboration-menu" role="menu" aria-label="选择协作方式"></div>
+          </div>
+          <div id="slash-menu" class="slash-menu hidden"></div>
+          <div class="composer">
+            <div class="composer-row">
+              <textarea id="input" placeholder="输入消息…  / 唤起命令 · Ctrl+P 面板 · Enter 发送" rows="2"></textarea>
+              <div class="composer-actions">
+                <button id="abort" type="button" disabled>Esc</button>
+                <button id="send" type="button">Enter ⏎</button>
+              </div>
+            </div>
+            <div class="statusbar">
+              <button type="button" class="status-link" id="model-label" title="切换模型">—</button>
+              <span class="sep">·</span>
+              <button type="button" class="status-link" id="effort-label" title="思考强度">—</button>
+              <span class="sep">·</span>
+              <span class="ctx-bar" title="上下文用量">
+                <span class="ctx-track"><span class="ctx-fill" id="ctx-fill"></span></span>
+                <span id="ctx-label">ctx</span>
+              </span>
+              <span class="sep">·</span>
+              <span id="status-text">就绪</span>
+              <span class="char-count" id="char-count"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside id="rail" class="rail" aria-label="右侧检视">
+        <div class="rail-head">
+          <span>检视</span>
+          <button type="button" class="sb-toggle" id="rail-close" title="收起">›</button>
+        </div>
+
+        <section class="rail-section">
+          <div class="rail-label">市场脉搏</div>
+          <div id="rail-pulse" class="rail-pulse">
+            <div class="rail-empty">拉取指数中…</div>
+          </div>
+          <div class="rail-note" id="rail-trade-date"></div>
+        </section>
+
+        <section class="rail-section">
+          <div class="rail-label-row">
+            <div class="rail-label">涨停速览</div>
+            <button type="button" class="sb-link" id="rail-limit-refresh" title="刷新">刷新</button>
+            <button type="button" class="sb-link" id="rail-limit-open" title="打开完整面板">完整</button>
+          </div>
+          <div id="rail-limit" class="rail-limit">
+            <div class="rail-empty">点击刷新加载</div>
+          </div>
+        </section>
+
+        <section class="rail-section rail-run">
+          <div class="rail-label-row">
+            <div class="rail-label">本轮运行</div>
+            <button type="button" class="rail-abort" id="rail-abort" disabled>中止</button>
+          </div>
+          <div class="rail-activity" id="rail-activity">就绪</div>
+          <div class="rail-sub" id="rail-round"></div>
+          <details class="rail-fold" id="rail-think-fold">
+            <summary class="rail-fold-label">思考</summary>
+            <div class="rail-think-body" id="rail-think-body">—</div>
+          </details>
+          <details class="rail-fold" id="rail-tools-fold">
+            <summary class="rail-fold-label">工具栈</summary>
+            <div class="rail-tools" id="rail-tools">
+              <div class="rail-empty">尚无工具调用</div>
+            </div>
+          </details>
+          <div class="rail-ctx" id="rail-ctx-detail"></div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <!-- About / intro -->
+  <div id="about" class="about hidden" aria-hidden="true">
+    <div class="about-backdrop" id="about-backdrop"></div>
+    <div class="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="about-head">
+        <h2 id="about-title">关于 Atrading</h2>
+        <button type="button" class="picker-close" id="about-close" title="Esc">✕</button>
+      </div>
+      <div class="about-body" id="about-body"></div>
+    </div>
+  </div>
+
+  <!-- Feature panel (direct tools) -->
+  <div id="feature" class="feature hidden" aria-hidden="true">
+    <div class="feature-backdrop" id="feature-backdrop"></div>
+    <div class="feature-dialog" role="dialog" aria-modal="true" aria-labelledby="feature-title">
+      <div class="feature-head">
+        <h2 id="feature-title">快捷</h2>
+        <button type="button" class="picker-close" id="feature-close" title="Esc">✕</button>
+      </div>
+      <div class="feature-form" id="feature-form"></div>
+      <div class="feature-meta" id="feature-meta"></div>
+      <div class="feature-result" id="feature-result"></div>
+    </div>
+  </div>
+
+  <!-- Command palette (TUI Ctrl+P) -->
+  <div id="palette" class="palette hidden" aria-hidden="true">
+    <div class="palette-backdrop" id="palette-backdrop"></div>
+    <div class="palette-dialog" role="dialog" aria-modal="true" aria-labelledby="palette-title">
+      <div class="palette-head">
+        <h2 id="palette-title">命令面板</h2>
+        <kbd>Ctrl+P</kbd>
+      </div>
+      <input type="search" id="palette-input" class="palette-input" placeholder="搜索命令…" autocomplete="off" />
+      <div class="palette-list" id="palette-list"></div>
+      <div class="palette-foot">↑↓ 选择 · Enter 执行 · Esc 关闭</div>
+    </div>
+  </div>
+
+  <!-- Secondary picker (TUI-style modal) -->
+  <div id="picker" class="picker hidden" aria-hidden="true">
+    <div class="picker-backdrop" id="picker-backdrop"></div>
+    <div class="picker-dialog" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+      <div class="picker-head">
+        <h2 id="picker-title">Session</h2>
+        <button type="button" class="picker-close" id="picker-close" title="Esc">✕</button>
+      </div>
+      <p class="picker-hint" id="picker-hint">选择一项</p>
+      <div class="picker-list" id="picker-list"></div>
+      <div class="picker-foot">Esc 返回/关闭 · Enter / 点击选择</div>
+    </div>
+  </div>
+</body>
+</html>

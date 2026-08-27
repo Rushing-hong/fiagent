@@ -8,35 +8,48 @@ import sys
 from openai import OpenAI
 
 from core.context import AgentContext
+from core.llm.catalog import DEFAULT_MODEL_ID, get_model_spec
+from core.llm.client import (
+    MissingApiKeyError,
+    first_configured_provider,
+    get_client_for_model,
+    resolve_api_key,
+)
 from hooks.registry import HookRegistry
 from paths import ENV_PATH, PROJECT_ROOT
 from session import RETENTION_DAYS, SessionInfo, SessionStore
 from ui import ui
-from ui.prefs import get_ui_mode, get_last_session_id, set_last_session_id
+from ui.prefs import get_model, get_ui_mode, get_last_session_id, set_last_session_id, set_model
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="DeepSeek Agent with sessions")
+    parser = argparse.ArgumentParser(description="Atrading Agent with sessions")
     parser.add_argument("--resume", metavar="ID", help="恢复指定 session")
     parser.add_argument("--list", action="store_true", help="列出所有 session 后退出")
     ui_group = parser.add_mutually_exclusive_group()
     ui_group.add_argument("--plain", action="store_true", help="本次使用纯终端 Rich 界面（不写入偏好）")
     ui_group.add_argument("--tui", action="store_true", help="本次使用 Textual TUI 全屏界面（不写入偏好）")
+    ui_group.add_argument("--web", action="store_true", help="本次使用本机网页界面（不写入偏好）")
     return parser.parse_args()
 
 
-def resolve_ui_mode(args: argparse.Namespace) -> bool:
-    """返回 True 表示使用纯终端模式。"""
+def resolve_ui_mode(args: argparse.Namespace) -> str:
+    """返回 ``tui`` / ``plain`` / ``web``。"""
+    if getattr(args, "web", False):
+        return "web"
     if args.plain:
-        return True
+        return "plain"
     if args.tui:
-        return False
+        return "tui"
     env = os.getenv("FIAGENT_PLAIN_UI", "").strip().lower()
     if env in ("1", "true", "yes"):
-        return True
+        return "plain"
     if env in ("0", "false", "no"):
-        return False
-    return get_ui_mode() == "plain"
+        return "tui"
+    web_env = os.getenv("FIAGENT_WEB_UI", "").strip().lower()
+    if web_env in ("1", "true", "yes"):
+        return "web"
+    return get_ui_mode()
 
 
 def _load_local_env() -> None:
@@ -83,19 +96,52 @@ def _save_env_key(key: str, value: str) -> None:
     os.environ[key] = value
 
 
+def _ensure_llm_ready() -> OpenAI:
+    """Resolve preferred model + API key; prompt once if the active provider lacks a key."""
+    model_id = get_model()
+    try:
+        spec = get_model_spec(model_id)
+    except KeyError:
+        set_model(DEFAULT_MODEL_ID)
+        model_id = DEFAULT_MODEL_ID
+        spec = get_model_spec(model_id)
+
+    from core.llm.providers import get_provider
+
+    provider = get_provider(spec.provider)
+    if resolve_api_key(provider):
+        return get_client_for_model(model_id)
+
+    # Fall back to any configured provider and switch default model if needed
+    other = first_configured_provider()
+    if other is not None and other.id != provider.id:
+        from core.llm.catalog import list_models
+
+        for m in list_models():
+            if m.provider == other.id:
+                set_model(m.id)
+                ui.info(f"当前模型缺少 {provider.env_key}，已改用 {m.label}")
+                return get_client_for_model(m.id)
+
+    # Prompt for the active provider key (DeepSeek-compatible UX)
+    ui.info(f"需要 {provider.label} 的 API Key（环境变量 {provider.env_key}）")
+    api_key = ui.api_key_prompt().strip()
+    if not api_key:
+        ui.error(f"{provider.env_key} 不能为空")
+        sys.exit(1)
+    _save_env_key(provider.env_key, api_key)
+    ui.info(f"API Key 已保存到 {ENV_PATH}")
+    try:
+        return get_client_for_model(get_model())
+    except MissingApiKeyError as exc:
+        ui.error(str(exc))
+        sys.exit(1)
+
+
 def bootstrap(args: argparse.Namespace):
     """共享启动逻辑，返回运行所需对象。"""
     _load_local_env()
-    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if not api_key:
-        api_key = ui.api_key_prompt().strip()
-        if not api_key:
-            ui.error("API Key 不能为空")
-            sys.exit(1)
-        _save_env_key("DEEPSEEK_API_KEY", api_key)
-        ui.info(f"API Key 已保存到 {ENV_PATH}")
-
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    client = _ensure_llm_ready()
 
     hooks = HookRegistry()
     try:

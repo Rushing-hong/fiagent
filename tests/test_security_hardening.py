@@ -9,7 +9,8 @@ import pytest
 
 from skills.registry import SkillRegistry, _validate_skill_name
 from tools._fs import PathError, resolve_path
-from tools.run_python import _sanitized_subprocess_env
+from tools.run_python import RunPythonTool, _sanitized_subprocess_env
+from ui.web.server import _current_model_status, _is_authorized_post
 
 
 def test_skill_name_rejects_traversal():
@@ -56,6 +57,46 @@ def test_sanitized_env_strips_secrets(monkeypatch):
     assert env.get("PATH") == "/usr/bin"
     assert env.get("NORMAL_FLAG") == "1"
     assert env.get("PYTHONUNBUFFERED") == "1"
+
+
+def test_run_python_is_explicit_opt_in(monkeypatch):
+    monkeypatch.delenv("FIAGENT_ENABLE_RUN_PYTHON", raising=False)
+    assert RunPythonTool.check_available() is False
+    monkeypatch.setenv("FIAGENT_ENABLE_RUN_PYTHON", "1")
+    assert RunPythonTool.check_available() is True
+
+
+def test_web_post_requires_run_token_and_same_origin():
+    token = "random-token"
+    headers = {"Origin": "http://127.0.0.1:8787", "X-Atrading-CSRF": token}
+    assert _is_authorized_post(headers, expected_origin=headers["Origin"], csrf_token=token)
+    assert not _is_authorized_post({"X-Atrading-CSRF": token}, expected_origin=headers["Origin"], csrf_token="other")
+    assert not _is_authorized_post(
+        {"Origin": "https://attacker.example", "X-Atrading-CSRF": token},
+        expected_origin=headers["Origin"],
+        csrf_token=token,
+    )
+
+
+def test_web_model_status_is_ui_safe(monkeypatch):
+    import core.llm.client as llm_client
+    import ui.web.server as web_server
+
+    monkeypatch.setattr(web_server, "get_model", lambda: "gpt-5.6-sol")
+    monkeypatch.setattr(
+        llm_client,
+        "provider_status",
+        lambda provider: {
+            "ready": True,
+            "has_key": True,
+            "note": "Key ✓",
+            "secret": "must-not-leak",
+        },
+    )
+
+    status = _current_model_status()
+
+    assert status == {"ready": True, "provider": "openai", "note": "Key ✓"}
 
 
 def test_trading_days_no_weekday_fallback(monkeypatch):

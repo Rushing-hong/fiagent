@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-import os
 import random
 import threading
 import time
 from typing import Any
 
 import requests
+
+from core.config import env_float, env_int
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,10 @@ DEFAULT_USER_AGENT = (
 _JITTER_MAX_S = 0.4
 
 # 连接被对端掐断 / 超时：有限次退避重试（东财 RemoteDisconnected 常见）
-_HTTP_RETRIES = max(1, int(os.environ.get("FIAGENT_HTTP_RETRIES", "3")))
-_HTTP_RETRY_BACKOFF = float(os.environ.get("FIAGENT_HTTP_RETRY_BACKOFF", "0.8"))
+_HTTP_RETRIES = env_int("FIAGENT_HTTP_RETRIES", 3, minimum=1, maximum=10)
+_HTTP_RETRY_BACKOFF = env_float(
+    "FIAGENT_HTTP_RETRY_BACKOFF", 0.8, minimum=0.0, maximum=30.0
+)
 
 _sessions: dict[str, dict[int, requests.Session]] = {}  # host_key → thread_id → Session
 _session_lock = threading.Lock()
@@ -66,13 +69,7 @@ def _wait(host_key: str, min_interval: float) -> None:
 
 
 def resolve_min_interval(env_var: str, default: float) -> float:
-    raw = os.getenv(env_var)
-    if raw is None:
-        return default
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return default
+    return env_float(env_var, default, minimum=0.0)
 
 
 def throttled_get(

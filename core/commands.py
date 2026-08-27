@@ -11,15 +11,19 @@ from ui import ui
 from ui.prefs import (
     ALWAYS_ON_TOOLS,
     AVAILABLE_EFFORTS,
+    AVAILABLE_MODELS,
     EFFORT_LABELS,
     MODEL_LABELS,
+    current_model_supports_thinking,
     effort_label,
     get_model,
     get_reasoning_effort,
     is_mcp_tool_enabled,
     is_skill_enabled,
     is_tool_enabled,
+    model_group,
     model_label,
+    resolve_model_id,
     set_last_session_id,
     set_model,
     set_reasoning_effort,
@@ -32,6 +36,7 @@ from ui.prefs import (
 
 HANDLED_RESTART = "__restart__"
 HANDLED_REEXEC = "__reexec__"
+HANDLED_QUIT = "__quit__"
 
 # `/` 菜单与 /help 只展示主命令；别名仍可手输，见 COMMAND_ALIASES
 SESSION_COMMANDS = {
@@ -45,8 +50,8 @@ SESSION_COMMANDS = {
     "/reload_comp": "全面重启（退出进程并重新进入，保留当前 session）",
     "/expand": "展开折叠（TUI 点标题；纯终端用 /expand 或 /e）",
     "/list": "列出可展开项（1=最新）",
-    "/model": "打开模型选择；或 /model [pro|flash]",
-    "/effort": "打开思考强度选择；或 /effort [high|max|off]",
+    "/model": "打开模型选择；或 /model <id|pro|flash>",
+    "/effort": "打开思考强度；或 /effort [high|max|off]（部分模型不支持）",
     "/tools": "管理工具开关；或 /tools [name] 切换",
     "/skills": "管理 Skills 开关；或 /skills [name] 切换",
     "/mcp": "管理 MCP server / 工具开关",
@@ -54,8 +59,14 @@ SESSION_COMMANDS = {
     "/verbose": "切换长内容默认全部展开",
     "/tui": "切换为 TUI 全屏界面（保存偏好并重启）",
     "/plain": "切换为纯终端 Rich 界面（保存偏好并重启）",
+    "/web": "切换为本机网页界面（保存偏好并重启）",
     "/ui": "查看当前界面模式",
-    "/quit": "退出 Atrading",
+    "/research": "多 Agent 深度研究，用法: /research <问题>",
+    "/committee": "投委会模式（合规/风控/执行门），用法: /committee <问题>",
+    "/review": "交易复盘，用法: /review <交割单路径或描述>",
+    "/evals": "查看 Agent A/B 评估汇总（需 FIAGENT_EVAL=1）",
+    "/cache": "查看 Prompt Cache 实际命中率；/cache reset 清零",
+    "/quit": "退出 Atrading（别名: /exit, /q）",
 }
 
 # 别名 → 主命令（可执行；补全时若键入别名则带出主命令）
@@ -94,7 +105,13 @@ _MENU_ORDER = (
     "/delete",
     "/tui",
     "/plain",
+    "/web",
     "/ui",
+    "/research",
+    "/committee",
+    "/review",
+    "/evals",
+    "/cache",
     "/quit",
 )
 _MENU_RANK = {cmd: i for i, cmd in enumerate(_MENU_ORDER)}
@@ -108,6 +125,10 @@ def match_slash_command(cmd: str, query: str) -> bool:
     """
     q = (query or "").strip().lower()
     c = cmd.lower()
+    # `/re` is the documented restart shorthand.  Do not make it easy to
+    # launch a costly research/review workflow by completing that shorthand.
+    if q == "/re" and c in {"/research", "/review"}:
+        return False
     if not q or q == "/":
         return True
     if c.startswith(q) or c == q:
@@ -244,11 +265,34 @@ def handle_session_command(
     current: SessionInfo | None,
 ) -> tuple[SessionInfo | None, list[dict] | None, bool | str]:
     parts = cmd.split(maxsplit=1)
-    name = parts[0].lower()
+    name = COMMAND_ALIASES.get(parts[0].lower(), parts[0].lower())
     arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if name == "/quit":
+        return current, None, HANDLED_QUIT
 
     if name == "/help":
         ui.show_help(SESSION_COMMANDS)
+        return current, None, True
+
+    if name == "/evals":
+        from evals.dashboard import build_dashboard, format_dashboard_markdown
+
+        dashboard = build_dashboard()
+        if dashboard.get("status") == "empty":
+            ui.info(dashboard.get("message", "暂无评估记录"))
+        else:
+            ui.show_reply(format_dashboard_markdown(dashboard))
+        return current, None, True
+
+    if name == "/cache":
+        from core.llm.cache_metrics import format_cache_metrics, reset_cache_metrics
+
+        if arg.lower() in {"reset", "clear"}:
+            reset_cache_metrics()
+            ui.success("Prompt Cache 统计已清零")
+        else:
+            ui.info(format_cache_metrics())
         return current, None, True
 
     if name == "/sessions" or name == "/session":
@@ -335,27 +379,35 @@ def handle_session_command(
         return current, None, True
 
     if name == "/model":
-        aliases = {
-            "pro": "deepseek-v4-pro",
-            "flash": "deepseek-v4-flash",
-            "deepseek-v4-pro": "deepseek-v4-pro",
-            "deepseek-v4-flash": "deepseek-v4-flash",
-        }
         if not arg:
-            ui.info(
-                f"当前模型: {model_label()}（{get_model()}）"
-                f"  可选: pro / flash"
-            )
+            groups: dict[str, list[str]] = {}
+            for mid in AVAILABLE_MODELS:
+                groups.setdefault(model_group(mid) or "其他", []).append(mid)
+            lines = [f"当前: {model_label()}（{get_model()}）"]
+            for g, ids in groups.items():
+                lines.append(f"\n[{g}]")
+                for mid in ids:
+                    mark = "→" if mid == get_model() else " "
+                    lines.append(f"  {mark} {mid}  {MODEL_LABELS.get(mid, mid)}")
+            lines.append("\n用法: /model <id|pro|flash>；或打开模型选择器")
+            ui.info("\n".join(lines))
             return current, None, True
-        target = aliases.get(arg.lower())
+        target = resolve_model_id(arg)
         if target is None:
-            ui.warn("用法: /model [pro|flash]")
+            ui.warn("未知模型。用法: /model <id|pro|flash>，输入 /model 查看列表")
             return current, None, True
         set_model(target)
-        ui.success(f"模型已切换为 {MODEL_LABELS[target]}（{target}）")
+        ui.success(f"模型已切换为 {MODEL_LABELS.get(target, target)}（{target}）")
         return current, None, True
 
     if name == "/effort":
+        if not current_model_supports_thinking():
+            ui.warn(
+                f"当前模型 {model_label()} 不支持思考强度调节"
+                "（仍可切换；仅 DeepSeek / 部分推理模型生效）"
+            )
+            if not arg:
+                return current, None, True
         if not arg:
             ui.info(
                 f"当前思考强度: {effort_label()}（{get_reasoning_effort()}）"
@@ -493,7 +545,7 @@ def handle_session_command(
         return current, None, True
 
     if name == "/ui":
-        ui.info(f"当前界面: {ui_mode_label()}（/tui 或 /plain 切换并重启）")
+        ui.info(f"当前界面: {ui_mode_label()}（/tui /plain /web 切换并重启）")
         return current, None, True
 
     if name == "/tui":
@@ -504,6 +556,11 @@ def handle_session_command(
     if name == "/plain":
         set_ui_mode("plain")
         ui.success("已切换为纯终端模式，正在全面重启…")
+        return current, None, HANDLED_REEXEC
+
+    if name == "/web":
+        set_ui_mode("web")
+        ui.success("已切换为网页模式，正在全面重启…")
         return current, None, HANDLED_REEXEC
 
     return current, None, False

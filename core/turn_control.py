@@ -34,13 +34,14 @@ class TurnController:
         self._tui_mode = enabled
 
     def start(self) -> None:
-        if self._tui_mode:
-            return
-        self._active = True
+        # Always clear per-turn flags (TUI/web skip stdin listener).
         self._paused.clear()
         self._abort.clear()
         self._pause_pending.clear()
         self._pause_notice_shown = False
+        if self._tui_mode:
+            return
+        self._active = True
         self._listener = threading.Thread(target=self._listen_stdin, daemon=True)
         self._listener.start()
 

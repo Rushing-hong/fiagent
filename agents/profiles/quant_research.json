@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "quant_research",
+  "display_name": "Quant Research",
+  "system_prompt_file": "prompts/agents/quant_research.md",
+  "max_tool_rounds": 16,
+  "allowed_tools": [
+    "load_skill",
+    "get_market_data",
+    "pattern",
+    "factor_analysis",
+    "run_backtest",
+    "simulate_execution",
+    "build_tradable_universe",
+    "load_pit_universe",
+    "analyze_portfolio_risk",
+    "suggest_hedge_ratio",
+    "blend_black_litterman",
+    "run_python",
+    "search_symbol",
+    "get_current_time"
+  ],
+  "allowed_skills": [
+    "technical-analysis",
+    "backtest-diagnose",
+    "volatility",
+    "pair-trading"
+  ]
+}

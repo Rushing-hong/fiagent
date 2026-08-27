@@ -4,6 +4,7 @@ import re
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Any
 
 from rich import box
 from rich.console import Console, Group, RenderableType
@@ -29,6 +30,58 @@ from ui.collapse import (
 from ui.prefs import get_thinking_mode, toggle_thinking_mode
 
 UI_CACHE_DIR = DATA_DIR / "ui_cache"
+
+
+def _agent_ui_emit(ui_type: str, **data: Any) -> bool:
+    """Route sub-agent UI to Web agent panel (mirrors main chat SSE types)."""
+    try:
+        from research.run_context import get_run_context, suppress_main_chat_ui
+        from ui.web.collaboration_progress import emit_collaboration_progress
+
+        if not suppress_main_chat_ui():
+            return False
+        rc = get_run_context()
+        emit_collaboration_progress({
+            "phase": "agent_ui",
+            "run_id": rc.run_id if rc else "",
+            "agent": (rc.agent_name if rc and rc.agent_name else "orchestrator"),
+            "ui_type": ui_type,
+            **data,
+        })
+        return True
+    except Exception:
+        return False
+
+
+def _emit_research_rail_log(message: str, *, level: str = "info") -> None:
+    try:
+        from research.run_context import get_run_context
+        from ui.web.collaboration_progress import emit_collaboration_progress
+
+        rc = get_run_context()
+        emit_collaboration_progress({
+            "phase": "agent_log",
+            "run_id": rc.run_id if rc else "",
+            "agent": (rc.agent_name if rc and rc.agent_name else "orchestrator"),
+            "level": level,
+            "message": message[:500],
+        })
+    except Exception:
+        pass
+
+
+def _maybe_suppress_chat_ui(message: str, *, level: str = "info") -> bool:
+    try:
+        from research.run_context import suppress_main_chat_ui
+
+        if not suppress_main_chat_ui():
+            return False
+        if _agent_ui_emit("line", message=message, level=level):
+            return True
+        _emit_research_rail_log(message, level=level)
+        return True
+    except ImportError:
+        return False
 
 # OpenCode 风格默认：思考 3 行、工具块 10 行，宽度自适应
 THINK_MAX_LINES = int(os.getenv("FIAGENT_THINK_MAX_LINES", "3"))
@@ -185,6 +238,8 @@ class AgentUI:
         return len(self._recent) - self._recent.index(item_id)
 
     def list_collapsed(self) -> None:
+        if self._tui_call("web_list_folds"):
+            return
         if not self._recent:
             self.warn("暂无折叠内容")
             return
@@ -334,6 +389,8 @@ class AgentUI:
         self.console.print(Rule(title, style="accent"))
 
     def info(self, message: str) -> None:
+        if _maybe_suppress_chat_ui(message, level="info"):
+            return
         if self._tui_call("mount_line", f"[dim]{rich_escape(message)}[/]", classes="line-info"):
             return
         self.console.print(f"[muted]ℹ[/] {message}")
@@ -344,16 +401,25 @@ class AgentUI:
         self.console.print(f"[ok]✓[/] {message}")
 
     def warn(self, message: str) -> None:
+        if _maybe_suppress_chat_ui(message, level="warn"):
+            return
         if self._tui_call("mount_line", f"[yellow]{rich_escape(message)}[/]", classes="line-warn"):
             return
         self.console.print(f"[warn]![/] {message}")
 
     def error(self, message: str) -> None:
+        if _maybe_suppress_chat_ui(message, level="error"):
+            return
         if self._tui_call("mount_line", f"[red]{rich_escape(message)}[/]", classes="line-err"):
             return
         self.console.print(Panel(message, title="错误", border_style="err", box=box.ROUNDED))
 
     def hook_log(self, tag: str, message: str) -> None:
+        hook_msg = f"{tag} {message}" if tag not in ("tool.before", "tool.after") else message
+        if _maybe_suppress_chat_ui(hook_msg, level="info"):
+            return
+        if tag in ("tool.before", "tool.after") and _agent_ui_emit("hook", tag=tag, message=message):
+            return
         if tag in ("tool.before", "tool.after"):
             name = message
             if tag == "tool.before":
@@ -423,7 +489,7 @@ class AgentUI:
         table.add_row("Hooks", str(len(hooks)) if hooks else "无")
         think = "展开" if self.thinking_mode == "show" else "折叠一行"
         table.add_row("思考显示", think)
-        table.add_row("界面", ui_mode_label(ui_mode if ui_mode in ("tui", "plain") else None))
+        table.add_row("界面", ui_mode_label(ui_mode if ui_mode in ("tui", "plain", "web") else None))
         table.add_row("展开", "[muted]e[/] 最新  [muted]1-9[/] 对应项  [muted]list[/] 列表")
         table.add_row("运行中", "[muted]Esc[/] 暂停  [muted]/model /effort[/] 切换")
         self.console.print(Panel(table, title="就绪", border_style="green", box=box.ROUNDED))
@@ -467,6 +533,9 @@ class AgentUI:
         self.console.print()
 
     def show_help(self, commands: dict[str, str]) -> None:
+        if self._tui and hasattr(self._tui, "mount_help"):
+            self._tui_call("mount_help", commands)
+            return
         if self.use_tui:
             rows = [f"[bold]{cmd}[/]  {desc}" for cmd, desc in commands.items()]
             self._tui_call("mount_line", "\n".join(rows), classes="msg-info")
@@ -505,11 +574,15 @@ class AgentUI:
     def llm_round_start(self, round_idx: int) -> None:
         self._reply_streamed = False
         self._thinking_shown = False
+        if _agent_ui_emit("round", round_idx=round_idx):
+            return
         if self._tui_call("llm_round_start", round_idx):
             return
         self.console.print(f"[muted]第 {round_idx} 轮…[/]")
 
     def llm_activity_update(self, text: str) -> None:
+        if _agent_ui_emit("activity", text=text):
+            return
         if self._tui_queue_activity(text):
             return
         if self._plain_stream_live is None:
@@ -535,18 +608,26 @@ class AgentUI:
     def stream_thinking_begin(self) -> None:
         self._thinking_shown = True
         self._tui_think_pending = ""
+        if _agent_ui_emit("think_begin"):
+            return
         if self._tui_call("stream_thinking_begin"):
             return
 
     def stream_thinking_update(self, text: str) -> None:
-        self._tui_think_pending = text
-        if self._tui:
+        if _agent_ui_emit("think_delta", text=text):
             return
+        # 必须推到 TUI/Web bridge；仅写 pending 时 Web 会「全无输出」
+        if self._tui:
+            self._tui_queue_think(text)
+            return
+        self._tui_think_pending = text
 
     def stream_thinking_end(self, text: str) -> None:
         self._thinking_shown = bool(text)
         self._tui_think_pending = text
         self._tui_think_queued = False
+        if _agent_ui_emit("think_end", text=text or "", chars=len(text or "")):
+            return
         if self._tui_call("stream_thinking_end", text):
             return
 
@@ -554,6 +635,8 @@ class AgentUI:
         self.llm_activity_clear()
         self._tui_stream_pending = ""
         self._tui_stream_queued = False
+        if _agent_ui_emit("reply_begin"):
+            return
         if self._tui_call("stream_reply_begin"):
             return
         from rich.live import Live
@@ -566,10 +649,13 @@ class AgentUI:
         self._plain_stream_live.start()
 
     def stream_reply_update(self, content: str) -> None:
-        # TUI：只写 pending，由 tick 刷新，避免每 token call_from_thread 阻塞
-        self._tui_stream_pending = content
-        if self._tui:
+        if _agent_ui_emit("reply_delta", text=content):
             return
+        # 合并推送到 bridge（Web SSE / TUI tick）
+        if self._tui:
+            self._tui_queue_stream(content)
+            return
+        self._tui_stream_pending = content
         if self._plain_stream_live is not None:
             from rich.markdown import Markdown as RMarkdown
             self._plain_stream_live.update(
@@ -585,6 +671,9 @@ class AgentUI:
     def stream_reply_end(self, content: str) -> None:
         self._reply_streamed = bool(content)
         self._tui_stream_queued = False
+        if _agent_ui_emit("reply_end", text=content or "", chars=len(content or "")):
+            self.llm_activity_clear()
+            return
         if self._tui_call("stream_reply_end", content):
             self.llm_activity_clear()
             return
@@ -667,6 +756,29 @@ class AgentUI:
     })
 
     def show_tool_round(self, round_idx: int, msg) -> None:
+        if _agent_ui_emit("round_rule", title=f"第 {round_idx} 轮 · 工具调用"):
+            reasoning = getattr(msg, "reasoning_content", None)
+            if reasoning:
+                _agent_ui_emit("think_end", text=reasoning, chars=len(reasoning))
+            if msg.tool_calls:
+                from collections import Counter
+
+                name_counts = Counter(tc.function.name for tc in msg.tool_calls)
+                seen: set[str] = set()
+                for tc in msg.tool_calls:
+                    name = tc.function.name
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    count = name_counts[name]
+                    label = f"{name} ×{count}" if count > 1 else name
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                        args_text = json.dumps(args, ensure_ascii=False, indent=2)
+                    except json.JSONDecodeError:
+                        args_text = tc.function.arguments or ""
+                    _agent_ui_emit("tool_call", name=label, args=args_text)
+            return
         self.rule(f"第 {round_idx} 轮 · 工具调用")
         reasoning = getattr(msg, "reasoning_content", None)
         if reasoning:
@@ -694,10 +806,8 @@ class AgentUI:
                 args_text = tc.function.arguments or ""
 
             if self.use_tui:
-                if count > 1 or not args_text.strip() or args_text.strip() == "{}":
-                    self._tui_call("mount_line", f"  > {label}", classes="line-tool")
-                else:
-                    self._tui_call("tui_show_tool_call", label, args_text)
+                # Web/TUI：统一走工具折叠卡，避免只冒一行看不出在调工具
+                self._tui_call("tui_show_tool_call", label, args_text)
                 continue
 
             if count > 1 or not args_text.strip() or args_text.strip() == "{}":
@@ -718,6 +828,8 @@ class AgentUI:
             self._compact_line(prefix="->", label=name, meta="参数", style="tool")
 
     def show_tool_result(self, name: str, result: str) -> None:
+        if _agent_ui_emit("tool_result", name=name, text=result):
+            return
         if not self.verbose and name in self.INLINE_TOOLS:
             n = self._dup_result_counts.get(name, 0) + 1
             self._dup_result_counts[name] = n

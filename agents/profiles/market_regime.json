@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "market_regime",
+  "display_name": "Market Regime",
+  "system_prompt_file": "prompts/agents/market_regime.md",
+  "max_tool_rounds": 14,
+  "allowed_tools": [
+    "load_skill",
+    "get_market_breadth",
+    "get_sector_info",
+    "get_fund_flow",
+    "get_northbound_flow",
+    "get_etf_flow",
+    "get_margin_trading",
+    "get_limit_board",
+    "get_futures_quote",
+    "get_yield_curve",
+    "get_macro_data",
+    "northbound_signal",
+    "get_market_data",
+    "search_symbol",
+    "get_current_time"
+  ],
+  "allowed_skills": [
+    "sentiment-analysis",
+    "correlation-analysis"
+  ]
+}

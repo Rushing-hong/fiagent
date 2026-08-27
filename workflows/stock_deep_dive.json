@@ -1,0 +1,7 @@
+{
+  "id": "stock_deep_dive",
+  "description": "个股深度研究：公司 + 市场 + 量化",
+  "triggers": ["深度分析", "全面分析", "详细分析", "深入研究"],
+  "agents": ["data_guardian", "company_research", "market_regime", "quant_research", "red_team"],
+  "parallel_researchers": ["company_research", "market_regime", "quant_research"]
+}

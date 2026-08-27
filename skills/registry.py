@@ -31,6 +31,7 @@ class SkillRegistry:
         self._skills: list[Skill] = []
         self._by_name: dict[str, Skill] = {}
         self._file_cache: dict[Path, tuple[tuple[int, int, bool], Skill]] = {}
+        self.generation = 0
         self.user_dir.mkdir(parents=True, exist_ok=True)
         self.refresh()
 
@@ -109,6 +110,7 @@ class SkillRegistry:
         stale = set(self._file_cache) - live_paths
         for path in stale:
             self._file_cache.pop(path, None)
+        self.generation += 1
 
     def all(self) -> list[Skill]:
         return list(self._skills)
@@ -125,7 +127,7 @@ class SkillRegistry:
         return body
 
     @staticmethod
-    def _short_desc(text: str, *, limit: int = 48) -> str:
+    def _short_desc(text: str, *, limit: int = 40) -> str:
         """System / tool schema 用的短摘要（渐进披露第一层）。"""
         text = " ".join((text or "").split())
         if len(text) <= limit:
@@ -160,9 +162,9 @@ class SkillRegistry:
             return "（无可用 skill）"
         lines = []
         for skill in items:
-            tag = "内置" if skill.bundled else "用户"
             short = self._short_desc(skill.description)
-            lines.append(f"- [{tag}] `{skill.name}`: {short}")
+            tag = "[用户] " if not skill.bundled else ""
+            lines.append(f"- {tag}`{skill.name}`: {short}")
         return "\n".join(lines)
 
     def save(self, name: str, description: str, content: str) -> str:

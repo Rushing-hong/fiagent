@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,29 +17,30 @@ from typing import Any
 from openai import OpenAI
 
 from core.context import AgentContext
+from core.config import env_int
 from core.context_budget import estimate_context_usage
 from core.message_sanitize import slim_messages_for_api
 from core.stream import stream_chat_completion
 from core.turn_control import TurnAborted, turn_control
+from evals.tracker import begin_turn_eval, end_turn_eval, eval_tracking_enabled, get_turn_eval
 from hooks.registry import HookRegistry
 from ui import ui
 
 # 可选软上限（最后一步关工具做总结）；默认偏大，避免排行失败后立刻被掐
-MAX_TOOL_ROUNDS = int(os.environ.get("FIAGENT_MAX_TOOL_ROUNDS", "40"))
-MAX_READONLY_WORKERS = int(os.environ.get("FIAGENT_MAX_READONLY_WORKERS", "8"))
+MAX_TOOL_ROUNDS = env_int("FIAGENT_MAX_TOOL_ROUNDS", 40, minimum=2, maximum=200)
+MAX_READONLY_WORKERS = env_int(
+    "FIAGENT_MAX_READONLY_WORKERS", 8, minimum=1, maximum=32
+)
 # 连续相同 name+args 次数达到阈值 → 拒绝该次（OpenCode doom_loop=3）
-DOOM_LOOP_AT = int(os.environ.get("FIAGENT_DOOM_LOOP_AT", "3"))
+DOOM_LOOP_AT = env_int("FIAGENT_DOOM_LOOP_AT", 3, minimum=0, maximum=20)
 # 末步若模型仍死磕工具，最多再拒几次后强制结束
-_POST_LIMIT_REFUSALS = int(os.environ.get("FIAGENT_POST_LIMIT_REFUSALS", "2"))
+_POST_LIMIT_REFUSALS = env_int(
+    "FIAGENT_POST_LIMIT_REFUSALS", 2, minimum=1, maximum=10
+)
 
 _call_counts_lock = threading.Lock()
 
-_REPEAT_WARNING = (
-    "【提醒】工具 `{name}` 在本轮对话中已是第 {count} 次调用。"
-    "请优先基于已有结果继续；若确需再调，请换参数或换工具。\n\n"
-)
-
-# 对齐 OpenCode MAX_STEPS_PROMPT：末步只许文本总结
+from core.tool_advisory import STRONG_WARN_AT, tool_usage_advisory
 _MAX_STEPS_PROMPT = """【关键】已达本轮最大步骤数
 
 工具已暂时禁用，直到用户下一条输入。请只回复文本，不要再发起任何工具调用。
@@ -53,14 +53,61 @@ _MAX_STEPS_PROMPT = """【关键】已达本轮最大步骤数
 此约束优先于其它指令。只用文字回复。"""
 
 _DOOM_LOOP_MSG = (
-    "【doom_loop】已连续 {n} 次以相同参数调用 `{name}`，已拒绝本次执行。"
-    "请改用不同参数、换工具，或基于已有结果直接给出结论。"
-    "（阈值 FIAGENT_DOOM_LOOP_AT={n}）"
+    "【doom_loop】已连续 {n} 次以相同参数调用 `{name}`。"
+    "请确认是否确需重复执行，或换参数 / 更轻量的替代工具。"
 )
 
 _TOOLS_DISABLED_MSG = (
     "【步骤上限】工具已禁用。请用纯文本总结已完成与未完成事项，勿再请求工具。"
 )
+
+
+def _tool_result_succeeded(result: str) -> bool:
+    """Interpret the common tool envelope instead of treating execution as success."""
+    text = str(result or "").strip()
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        lowered = text.lower()
+        return not any(
+            marker in lowered
+            for marker in (
+                "pit_gate_blocked",
+                '"ok": false',
+                '"status": "error"',
+                "工具调用被 hook 拦截",
+                "不在当前 agent 授权范围",
+                "已被用户禁用",
+            )
+        )
+    if isinstance(payload, dict):
+        if payload.get("ok") is False:
+            return False
+        if str(payload.get("status") or "").lower() in {
+            "error",
+            "failed",
+            "blocked",
+        }:
+            return False
+    return True
+
+
+def _attach_evidence_id(result: str, evidence_id: str | None) -> str:
+    """Expose the canonical evidence id to the model without changing failures."""
+    if not evidence_id:
+        return result
+    try:
+        payload = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return result
+    if not isinstance(payload, dict):
+        return result
+    evidence = payload.get("_evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    evidence["evidence_id"] = evidence_id
+    payload["_evidence"] = evidence
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def assistant_message(msg: Any) -> dict[str, Any]:
@@ -154,13 +201,22 @@ def run_tool_with_hooks(
         )
 
     if doom:
+        ui.warn(
+            f"工具 `{name}` 已连续 {DOOM_LOOP_AT} 次相同参数 — "
+            "是否确需？可考虑替代工具或换参数。"
+        )
+        # Retrying an identical failing/expensive call cannot add information;
+        # reject it before hooks and execution, rather than merely prefixing a
+        # warning to another side effect.
         return _DOOM_LOOP_MSG.format(n=DOOM_LOOP_AT, name=name)
 
-    warn = (
-        _REPEAT_WARNING.format(name=name, count=count)
-        if not ctx.is_repeatable_tool(name) and count > 1
-        else ""
+    warn = tool_usage_advisory(
+        name,
+        count,
+        repeatable=ctx.is_repeatable_tool(name),
     )
+    if warn and count >= STRONG_WARN_AT:
+        ui.warn(f"工具 `{name}` 本轮第 {count} 次 — 是否确需？可考虑换更轻量工具。")
 
     before = hooks.emit("tool.before", {"name": name, "arguments": arguments})
     if before.cancel:
@@ -170,7 +226,33 @@ def run_tool_with_hooks(
     arguments = before.get("arguments", arguments)
     if turn_control.is_aborted():
         return _ABORT_TOOL_MSG
+
+    pit_block = None
+    try:
+        from research.run_context import pit_gate_block_message, log_tool_call
+        pit_block = pit_gate_block_message(name)
+    except ImportError:
+        log_tool_call = None  # type: ignore[assignment]
+
+    if pit_block:
+        if log_tool_call:
+            log_tool_call(name, arguments, pit_block, success=False)
+        return pit_block
+
     result = ctx.execute_tool(name, arguments)
+
+    try:
+        from research.run_context import log_tool_call as _log_tc
+        success = _tool_result_succeeded(result)
+        evidence_id = _log_tc(name, arguments, result, success=success)
+        result = _attach_evidence_id(result, evidence_id)
+    except ImportError:
+        pass
+
+    if eval_tracking_enabled():
+        stats = get_turn_eval()
+        if stats is not None:
+            stats.record_tool(name, result)
 
     after = hooks.emit("tool.after", {
         "name": name,
@@ -178,8 +260,11 @@ def run_tool_with_hooks(
         "result": result,
     })
     result = after.get("result", result)
+    prefix = ""
     if warn:
-        result = warn + result
+        prefix += warn
+    if prefix:
+        result = prefix + result
     return result
 
 
@@ -200,13 +285,39 @@ def _execute_tool_calls(
 
     results: dict[str, str] = {}
 
-    if readonly:
+    if len(readonly) == 1:
+        # The common case is a single tool call. Avoid constructing a thread
+        # pool unless there is actual parallel work to schedule.
+        tc = readonly[0]
+        try:
+            results[tc.id] = run_tool_with_hooks(
+                hooks,
+                ctx,
+                tc.function.name,
+                tc.function.arguments,
+                call_counts,
+                recent_sigs,
+            )
+        except Exception as exc:
+            results[tc.id] = f"工具执行异常: {exc}"
+    elif readonly:
+        from research.run_context import (
+            get_run_context,
+            is_research_run_active,
+            run_with_context,
+        )
+
+        research_ctx = get_run_context()
+        research_active = is_research_run_active()
         workers = min(MAX_READONLY_WORKERS, len(readonly))
         pool = ThreadPoolExecutor(max_workers=workers)
         aborted_parallel = False
         try:
             futures = {
                 pool.submit(
+                    run_with_context,
+                    research_ctx,
+                    research_active,
                     run_tool_with_hooks,
                     hooks,
                     ctx,
@@ -260,6 +371,42 @@ def _refuse_tools(msg: Any, messages: list[dict[str, Any]]) -> None:
         })
 
 
+def _prepare_round_request(
+    messages: list[dict[str, Any]],
+    ctx: AgentContext,
+    hooks: HookRegistry,
+    *,
+    step: int,
+    is_last: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str] | None:
+    """Build one API request consistently for interactive and headless turns."""
+    tools = [] if is_last else ctx.build_openai_tools(messages)
+    tool_choice = "none" if is_last else "auto"
+    llm_before = hooks.emit("llm.before", {
+        "messages": messages,
+        "tools": tools,
+        "round_idx": step,
+    })
+    if llm_before.cancel:
+        return None
+
+    req_messages = llm_before.get("messages", messages)
+    req_tools = [] if is_last else llm_before.get("tools", tools)
+    req_messages = slim_messages_for_api(
+        req_messages,
+        is_readonly=ctx.is_readonly_tool,
+        tools=req_tools,
+    )
+    req_messages = ctx.with_runtime_context_for_api(req_messages)
+    req_messages = ctx.with_clock_for_api(req_messages)
+    if is_last:
+        # API-only reminder; do not pollute persisted session history.
+        req_messages = list(req_messages) + [
+            {"role": "user", "content": _MAX_STEPS_PROMPT},
+        ]
+    return req_messages, req_tools, tool_choice
+
+
 def run_agent_turn(
     client: OpenAI,
     messages: list[dict[str, Any]],
@@ -285,33 +432,13 @@ def run_agent_turn(
             if step == 1:
                 ctx.refresh()
             ctx.sync_system_message(messages)
-            tools = [] if is_last else ctx.build_openai_tools()
-            tool_choice = "none" if is_last else "auto"
-
-            llm_before = hooks.emit("llm.before", {
-                "messages": messages,
-                "tools": tools,
-                "round_idx": step,
-            })
-            if llm_before.cancel:
+            prepared = _prepare_round_request(
+                messages, ctx, hooks, step=step, is_last=is_last
+            )
+            if prepared is None:
                 ui.hook_blocked("LLM 调用被 hook 拦截")
                 return
-
-            req_messages = llm_before.get("messages", messages)
-            req_tools = llm_before.get("tools", tools)
-            if is_last:
-                req_tools = []
-            req_messages = slim_messages_for_api(
-                req_messages,
-                is_readonly=ctx.is_readonly_tool,
-                tools=req_tools,
-            )
-            req_messages = ctx.with_clock_for_api(req_messages)
-            if is_last:
-                # 仅 API 副本注入，不污染会话历史
-                req_messages = list(req_messages) + [
-                    {"role": "user", "content": _MAX_STEPS_PROMPT},
-                ]
+            req_messages, req_tools, tool_choice = prepared
 
             usage = estimate_context_usage(req_messages, req_tools)
             ui.show_context_progress(usage)
@@ -364,3 +491,79 @@ def run_agent_turn(
             return
     finally:
         turn_control.stop()
+
+
+def collect_agent_turn(
+    client: OpenAI,
+    messages: list[dict[str, Any]],
+    ctx: AgentContext,
+    hooks: HookRegistry,
+    *,
+    max_rounds: int | None = None,
+    quiet: bool = False,
+    model_override: str | None = None,
+) -> tuple[str, int]:
+    """Headless ReAct turn for sub-agents. Returns (final_text, tool_rounds)."""
+    limit = max_rounds if max_rounds is not None else MAX_TOOL_ROUNDS
+    call_counts: dict[str, int] = {}
+    recent_sigs: deque[tuple[str, str]] = deque()
+    post_limit_refusals = 0
+    step = 0
+
+    while True:
+        step += 1
+        is_last = step >= limit
+
+        if step == 1:
+            ctx.refresh()
+        ctx.sync_system_message(messages)
+        prepared = _prepare_round_request(
+            messages, ctx, hooks, step=step, is_last=is_last
+        )
+        if prepared is None:
+            return ("LLM 调用被 hook 拦截", step)
+        req_messages, req_tools, tool_choice = prepared
+
+        msg = stream_chat_completion(
+            client,
+            messages=req_messages,
+            tools=req_tools,
+            tool_choice=tool_choice,
+            round_idx=step,
+            model_override=model_override,
+            quiet_ui=quiet,
+        )
+        msg = _promote_empty_reply(msg)
+        hooks.emit("llm.after", {"message": msg, "round_idx": step})
+        messages.append(assistant_message(msg))
+
+        if msg.tool_calls:
+            if is_last:
+                _refuse_tools(msg, messages)
+                post_limit_refusals += 1
+                if post_limit_refusals >= _POST_LIMIT_REFUSALS:
+                    text = (msg.content or "").strip() or "（步骤上限，未能完成）"
+                    return (text, step)
+                continue
+
+            ui.show_tool_round(step, msg)
+            results = _execute_tool_calls(
+                msg.tool_calls, hooks, ctx, call_counts, recent_sigs
+            )
+            for tc in msg.tool_calls:
+                result = results[tc.id]
+                ui.show_tool_result(tc.function.name, result)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+            continue
+
+        text = (msg.content or "").strip()
+        if not text and getattr(msg, "reasoning_content", None):
+            text = str(msg.reasoning_content).strip()
+        reasoning = getattr(msg, "reasoning_content", None) or ""
+        if quiet and reasoning and not msg.tool_calls:
+            ui.stream_thinking_end(reasoning)
+        return (text or "（无文本输出）", step)

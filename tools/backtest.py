@@ -76,13 +76,31 @@ class RunBacktestTool(BaseTool):
             },
             "strategy_params": {
                 "type": "object",
-                "description": "策略参数。ma_cross: {fast, slow}; rsi: {period, oversold, overbought}; momentum: {window}",
+                "description": "只传当前策略对应字段；动量窗口字段名是 window",
+                "properties": {
+                    "fast": {"type": "integer", "minimum": 1},
+                    "slow": {"type": "integer", "minimum": 2},
+                    "period": {"type": "integer", "minimum": 2},
+                    "oversold": {"type": "number", "minimum": 0, "maximum": 100},
+                    "overbought": {"type": "number", "minimum": 0, "maximum": 100},
+                    "window": {
+                        "type": "integer",
+                        "minimum": 2,
+                        "description": "momentum 策略回看窗口",
+                    },
+                },
+                "additionalProperties": False,
             },
             "signal_file": {
                 "type": "string",
                 "description": "自定义信号文件路径 (strategy=custom 时必填)。CSV: index=date, columns=代码, values=-1~1",
             },
             "initial_cash": {"type": "number", "default": 1000000},
+            "position_pct": {
+                "type": "number",
+                "default": 0.95,
+                "description": "策略总多头仓位上限（0-1）；默认预留 5% 现金覆盖手续费与滑点",
+            },
             "commission": {"type": "number", "default": 0.0003},
             "stamp_duty": {"type": "number", "default": 0.0005},
             "after_hours": {
@@ -222,6 +240,13 @@ class RunBacktestTool(BaseTool):
 
         strategy = str(args.get("strategy", "ma_cross"))
         is_custom = strategy == "custom"
+        try:
+            strategy_params = _normalize_strategy_params(
+                strategy,
+                args.get("strategy_params"),
+            )
+        except ValueError as exc:
+            return _err(str(exc))
 
         # Fetch data（单票失败跳过，不全盘中止）
         interval = str(args.get("interval") or "1d")
@@ -339,6 +364,7 @@ class RunBacktestTool(BaseTool):
 
         cfg = BacktestConfig(
             initial_cash=float(args.get("initial_cash", 1_000_000)),
+            position_pct=float(args.get("position_pct", 0.95)),
             commission=float(args.get("commission", 0.0003)),
             stamp_duty=float(args.get("stamp_duty", 0.0005)),
             after_hours=bool(args.get("after_hours", False)),
@@ -366,7 +392,7 @@ class RunBacktestTool(BaseTool):
                 data=data,
                 signal=signal_df if (is_custom and not sleeves) else None,
                 strategy=strategy if not is_custom else "",
-                strategy_params=args.get("strategy_params") if not is_custom else None,
+                strategy_params=strategy_params if not is_custom else None,
                 futures_data=futures_df,
                 sleeves=sleeves,
                 sleeve_weights=sleeve_weights,
@@ -391,3 +417,36 @@ class RunBacktestTool(BaseTool):
 
 def _err(message: str) -> str:
     return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
+
+
+_STRATEGY_PARAM_NAMES: dict[str, set[str]] = {
+    "ma_cross": {"fast", "slow"},
+    "rsi": {"period", "oversold", "overbought"},
+    "momentum": {"window"},
+    "buy_hold": set(),
+}
+
+
+def _normalize_strategy_params(strategy: str, raw: Any) -> dict[str, Any]:
+    """Normalize common model aliases and reject unsupported strategy keys."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("strategy_params 必须是对象")
+    params = dict(raw)
+    if strategy == "momentum" and "window" not in params:
+        for alias in ("momentum_window", "lookback"):
+            if alias in params:
+                params["window"] = params.pop(alias)
+                break
+    allowed = _STRATEGY_PARAM_NAMES.get(strategy)
+    if allowed is None:
+        return params
+    unexpected = sorted(set(params) - allowed)
+    if unexpected:
+        expected = ", ".join(sorted(allowed)) or "无参数"
+        raise ValueError(
+            f"strategy={strategy} 仅支持 strategy_params: {expected}；"
+            f"收到: {', '.join(unexpected)}"
+        )
+    return params

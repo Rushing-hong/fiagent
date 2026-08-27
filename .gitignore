@@ -32,3 +32,12 @@ signal_*.csv
 *.log
 example_signal_engine.py
 zoo_signal_engine.py
+
+# Local-only research material and ad-hoc experiments
+510050_daily.csv
+bs_option_data_pack.txt
+volume_compute.py
+volume_screen.py
+libs/
+scripts/
+data/PAPER_WORKSPACE.md

@@ -19,7 +19,7 @@ from rich.text import Text
 from rich.cells import cell_len, set_cell_size
 
 from core.context import AgentContext
-from core.loop import run_agent_turn
+from core.agents.dispatch import dispatch_turn
 from core.turn_control import TurnAborted, turn_control
 from hooks.registry import HookRegistry
 from session import SessionInfo, SessionStore
@@ -29,7 +29,6 @@ from ui.collapse import first_line_summary, reasoning_summary
 from ui.prefs import (
     ALWAYS_ON_TOOLS,
     AVAILABLE_EFFORTS,
-    AVAILABLE_MODELS,
     EFFORT_LABELS,
     MODEL_LABELS,
     effort_label,
@@ -749,8 +748,9 @@ class FiagentApp(App):
         self.mount_foldable(header, text, kind="think", collapsed=collapsed)
 
     def tui_show_tool_call(self, name: str, args_text: str) -> None:
-        if not args_text.strip() or args_text.strip() == "{}":
-            self.mount_line(f"  > {name}", classes="line-tool")
+        preview = (args_text or "").strip()
+        if not preview or preview == "{}":
+            self.mount_foldable(f"> {name}", "(无参数)", kind="tool", collapsed=False)
             return
         preview = self._fold_preview(args_text, max_lines=6)
         self.mount_foldable(f"> {name}", preview, kind="tool", collapsed=True)
@@ -851,32 +851,41 @@ class FiagentApp(App):
         )
 
     def open_model_picker(self) -> None:
+        from core.llm.catalog import list_models
+
         current = get_model()
         items = [
             PickerItem(
-                id=model_id,
-                label=MODEL_LABELS[model_id],
-                hint=model_id,
-                current=model_id == current,
+                id=m.id,
+                label=m.label,
+                hint=f"{m.group} · {m.api_model}",
+                current=m.id == current,
             )
-            for model_id in AVAILABLE_MODELS
+            for m in list_models()
         ]
         open_picker(
             self,
             title="模型",
-            hint="选择模型（下次请求生效）· Esc 返回命令面板",
+            hint="按厂商选择（下次请求生效）· Esc 返回命令面板",
             items=items,
             on_pick=self._palette_set_model,
             on_cancel=self.action_command_palette,
         )
 
     def open_effort_picker(self) -> None:
+        from ui.prefs import current_model_supports_thinking
+
         current = get_reasoning_effort()
+        supports = current_model_supports_thinking()
         items = [
             PickerItem(
                 id=effort,
                 label=EFFORT_LABELS[effort],
-                hint="关闭后走非 thinking 模式" if effort == "off" else "thinking 开启",
+                hint=(
+                    "当前模型不支持"
+                    if not supports
+                    else ("关闭后走非 thinking 模式" if effort == "off" else "thinking 开启")
+                ),
                 current=effort == current,
             )
             for effort in AVAILABLE_EFFORTS
@@ -884,7 +893,11 @@ class FiagentApp(App):
         open_picker(
             self,
             title="思考强度",
-            hint="选择强度 · Esc 返回命令面板",
+            hint=(
+                f"{model_label()} 不支持思考强度 · 仍可改偏好"
+                if not supports
+                else "选择强度 · Esc 返回命令面板"
+            ),
             items=items,
             on_pick=self._palette_set_effort,
             on_cancel=self.action_command_palette,
@@ -1458,47 +1471,51 @@ class FiagentApp(App):
             from core.commands import HANDLED_REEXEC, HANDLED_RESTART
 
             low = user_input.strip().lower()
-            # 带切换的命令：先进入次级界面，而不是直接改 / 刷列表
-            if low in ("/sessions", "/session"):
-                self.call_from_thread(self.open_session_picker)
-                return
-            if low == "/model":
-                self.call_from_thread(self.open_model_picker)
-                return
-            if low == "/effort":
-                self.call_from_thread(self.open_effort_picker)
-                return
-            if low in ("/tools", "/tool"):
-                self.call_from_thread(self.open_tools_picker)
-                return
-            if low in ("/skills", "/skill"):
-                self.call_from_thread(self.open_skills_picker)
-                return
-            if low in ("/mcp", "/mcps"):
-                self.call_from_thread(self.open_mcp_picker)
-                return
-
-            current, new_messages, handled = self.handle_command(
-                user_input, self.store, self.ctx, self.current
+            is_collaboration_command = (
+                low.startswith("/research") or low.startswith("/committee")
+                or low.startswith("/review")
             )
-            self.current = current
-            if handled in (HANDLED_REEXEC, HANDLED_RESTART):
-                self._pending_reexec = True
-                self._reexec_resume_id = self.current.id if self.current else None
-                self.call_from_thread(self.exit)
-                return
-            if new_messages is not None:
-                self.messages = new_messages
-                if self.current is not None:
-                    set_last_session_id(self.current.id)
-                self.call_from_thread(self._reload_session_view)
-            elif handled and user_input.strip().lower() == "/reload":
-                self.ctx.sync_system_message(self.messages)
-            elif not handled:
-                self.call_from_thread(
-                    ui.warn, f"未知命令: {user_input}，输入 /help 查看帮助"
+            if not is_collaboration_command:
+                if low in ("/sessions", "/session"):
+                    self.call_from_thread(self.open_session_picker)
+                    return
+                if low == "/model":
+                    self.call_from_thread(self.open_model_picker)
+                    return
+                if low == "/effort":
+                    self.call_from_thread(self.open_effort_picker)
+                    return
+                if low in ("/tools", "/tool"):
+                    self.call_from_thread(self.open_tools_picker)
+                    return
+                if low in ("/skills", "/skill"):
+                    self.call_from_thread(self.open_skills_picker)
+                    return
+                if low in ("/mcp", "/mcps"):
+                    self.call_from_thread(self.open_mcp_picker)
+                    return
+
+                current, new_messages, handled = self.handle_command(
+                    user_input, self.store, self.ctx, self.current
                 )
-            return
+                self.current = current
+                if handled in (HANDLED_REEXEC, HANDLED_RESTART):
+                    self._pending_reexec = True
+                    self._reexec_resume_id = self.current.id if self.current else None
+                    self.call_from_thread(self.exit)
+                    return
+                if new_messages is not None:
+                    self.messages = new_messages
+                    if self.current is not None:
+                        set_last_session_id(self.current.id)
+                    self.call_from_thread(self._reload_session_view)
+                elif handled and user_input.strip().lower() == "/reload":
+                    self.ctx.sync_system_message(self.messages)
+                elif not handled:
+                    self.call_from_thread(
+                        ui.warn, f"未知命令: {user_input}，输入 /help 查看帮助"
+                    )
+                return
 
         turn_ctx = self.hooks.emit("turn.start", {
             "input": user_input,
@@ -1514,7 +1531,7 @@ class FiagentApp(App):
         self.messages.append({"role": "user", "content": user_input})
 
         try:
-            run_agent_turn(self.client, self.messages, self.ctx, self.hooks)
+            dispatch_turn(self.client, self.messages, self.ctx, self.hooks, user_input)
             if self.current is None:
                 self.current = self.store.create()
                 self.store.auto_title(self.current.id, user_input)
@@ -1533,7 +1550,9 @@ class FiagentApp(App):
             self.call_from_thread(self.cancel_active_streams)
             self.call_from_thread(ui.warn, "本轮已中止，对话未保存本轮内容")
         except Exception as exc:
-            self.call_from_thread(ui.error, str(exc))
+            from core.stream import LlmStreamError
+            if not isinstance(exc, LlmStreamError):
+                self.call_from_thread(ui.error, str(exc))
             del self.messages[turn_start:]
 
 

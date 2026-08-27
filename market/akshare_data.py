@@ -414,64 +414,190 @@ def get_option_chain(underlying: str = "50ETF") -> str:
 
 
 # ===================================================================
-# Limit Board 涨停板
+# Limit Board 涨停板（东财三池：涨停 / 炸板 / 跌停）
 # ===================================================================
 
-def get_limit_board(date: str = "") -> str:
-    """Get daily limit-up / limit-down stock pool.
+def _parse_consecutive(raw: Any) -> int | None:
+    """Parse 连板数 or '涨停统计' like '4/4' → 4."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    s = str(raw).strip()
+    if not s:
+        return None
+    if "/" in s:
+        s = s.split("/", 1)[0].strip()
+    return _int(s)
 
-    Args:
-        date: Trading date YYYY-MM-DD. Empty = latest trading day.
-    
-    Returns: limit-up stocks with lock time, order book ratio, consecutive days;
-             limit-down stocks; broken-board (炸板) stocks.
+
+def _entry_from_zt_row(r: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    """Normalize eastmoney zt-pool row into a common shape."""
+    code = r.get("代码")
+    name = r.get("名称")
+    # 涨停池/炸板池：最后封板时间 or 首次封板时间；跌停：最后封板时间
+    limit_time = (
+        r.get("最后封板时间")
+        or r.get("首次封板时间")
+        or r.get("涨停时间")
+    )
+    consecutive = _parse_consecutive(r.get("连板数") or r.get("涨停统计") or r.get("连续跌停"))
+    return {
+        "code": str(code) if code is not None else "",
+        "name": str(name) if name is not None else "",
+        "change_pct": _float(r.get("涨跌幅")),
+        "price": _float(r.get("最新价")),
+        "limit_up_time": limit_time,
+        "open_count": _int(r.get("炸板次数") or r.get("开板次数")),
+        "consecutive_days": consecutive,
+        "limit_order_ratio": _float(r.get("封单资金") or r.get("封单金额")),
+        "turnover_rate": _float(r.get("换手率")),
+        "sector": r.get("所属行业"),
+        "type": kind,
+    }
+
+
+def _fetch_zt_pool(fn: Any, date_compact: str) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Return (records, error). Empty list is success with no rows; None is hard fail."""
+    try:
+        df = fn(date=date_compact)
+    except Exception as exc:
+        return None, str(exc)
+    if df is None:
+        return [], None
+    if getattr(df, "empty", True):
+        return [], None
+    return _df_to_records(df), None
+
+
+def get_limit_board(date: str = "") -> str:
+    """Get daily limit-up / broken-board / limit-down pools (eastmoney via akshare).
+
+    Sources:
+      - stock_zt_pool_em      → 涨停
+      - stock_zt_pool_zbgc_em → 炸板
+      - stock_zt_pool_dtgc_em → 跌停
+
+    Empty date = latest trading day (with fallback if pools empty).
     """
     _require_ak()
     try:
         import akshare as ak
-        date_compact = date.replace("-", "") if date else ""
-        if date_compact:
-            df = ak.stock_zt_pool_em(date=date_compact)
-        else:
-            df = ak.stock_zt_pool_em()
-        if df is None or df.empty:
-            return _err("未获取到涨停板数据")
-        records = _df_to_records(df)
-        up_list = []
-        down_list = []
-        broken_list = []
-        for r in records:
-            entry = {
-                "code": r.get("代码"),
-                "name": r.get("名称"),
-                "change_pct": _float(r.get("涨跌幅")),
-                "price": _float(r.get("最新价")),
-                "limit_up_time": r.get("涨停时间"),   # e.g. "093000"
-                "open_count": _int(r.get("炸板次数")),
-                "consecutive_days": _int(r.get("连板数")),
-                "limit_order_ratio": _float(r.get("封单金额")),
-                "turnover_rate": _float(r.get("换手率")),
-                "sector": r.get("所属行业"),
-            }
-            pct = entry.get("change_pct") or 0
-            open_cnt = entry.get("open_count") or 0
-            if pct >= 9.5:
-                if open_cnt > 0:
-                    broken_list.append({**entry, "type": "limit_up_broken"})
-                else:
-                    up_list.append({**entry, "type": "limit_up"})
-            elif pct <= -9.5:
-                down_list.append({**entry, "type": "limit_down"})
+        from market.trade_calendar import latest_trading_day, prev_trading_day
 
-        return _ok({
-            "date": date or "latest",
-            "limit_up_count": len(up_list),
-            "limit_down_count": len(down_list),
-            "broken_board_count": len(broken_list),
-            "limit_up": up_list[:50],
-            "broken_board": broken_list[:30],
-            "limit_down": down_list[:50],
-        }, source="akshare", market="a_share")
+        user_date = (date or "").strip()
+        resolved = user_date
+        if not resolved:
+            resolved = latest_trading_day() or ""
+        if not resolved:
+            return _err("无法解析最近交易日，请手动指定 YYYY-MM-DD")
+
+        candidates = [resolved]
+        if not user_date:
+            cur = resolved
+            for _ in range(5):
+                cur = prev_trading_day(cur)
+                if not cur:
+                    break
+                candidates.append(cur)
+
+        last_all_empty = None
+        last_exc: Exception | None = None
+
+        for day in candidates:
+            date_compact = day.replace("-", "")
+            pool_errors: dict[str, str] = {}
+            pool_ok: dict[str, bool] = {}
+
+            zt_rows, zt_err = _fetch_zt_pool(ak.stock_zt_pool_em, date_compact)
+            zb_rows, zb_err = _fetch_zt_pool(ak.stock_zt_pool_zbgc_em, date_compact)
+            dt_rows, dt_err = _fetch_zt_pool(ak.stock_zt_pool_dtgc_em, date_compact)
+
+            if zt_err:
+                pool_errors["limit_up"] = zt_err
+                last_exc = RuntimeError(zt_err)
+            else:
+                pool_ok["limit_up"] = True
+            if zb_err:
+                pool_errors["broken_board"] = zb_err
+            else:
+                pool_ok["broken_board"] = True
+            if dt_err:
+                pool_errors["limit_down"] = dt_err
+            else:
+                pool_ok["limit_down"] = True
+
+            # All three hard-failed → try next day
+            if zt_rows is None and zb_rows is None and dt_rows is None:
+                last_all_empty = day
+                continue
+
+            up_list = [
+                _entry_from_zt_row(r, kind="limit_up")
+                for r in (zt_rows or [])
+                if r.get("代码")
+            ]
+            broken_list = [
+                _entry_from_zt_row(r, kind="limit_up_broken")
+                for r in (zb_rows or [])
+                if r.get("代码")
+            ]
+            down_list = [
+                _entry_from_zt_row(r, kind="limit_down")
+                for r in (dt_rows or [])
+                if r.get("代码")
+            ]
+
+            # Nothing at all on this day → try fallback day when date was empty
+            if not up_list and not broken_list and not down_list:
+                last_all_empty = day
+                if not user_date:
+                    continue
+                # Explicit date with empty pools still return structure
+                pass
+
+            notes: list[str] = []
+            if not user_date and day != resolved:
+                notes.append(f"指定日无数据，已回退到 {day}")
+            if pool_errors:
+                notes.append(
+                    "部分池失败: "
+                    + ", ".join(f"{k}={v}" for k, v in pool_errors.items())
+                )
+
+            n_ok = sum(1 for v in pool_ok.values() if v)
+            quality = "normal" if n_ok == 3 and not pool_errors else "partial"
+            if n_ok == 0:
+                quality = "degraded"
+
+            return _ok(
+                {
+                    "date": day,
+                    "pools": {
+                        "limit_up": "stock_zt_pool_em",
+                        "broken_board": "stock_zt_pool_zbgc_em",
+                        "limit_down": "stock_zt_pool_dtgc_em",
+                    },
+                    "pool_errors": pool_errors or None,
+                    "limit_up_count": len(up_list),
+                    "limit_down_count": len(down_list),
+                    "broken_board_count": len(broken_list),
+                    "limit_up": up_list[:50],
+                    "broken_board": broken_list[:30],
+                    "limit_down": down_list[:50],
+                },
+                quality=quality,  # type: ignore[arg-type]
+                source="akshare/eastmoney",
+                market="a_share",
+                note="; ".join(notes) if notes else None,
+            )
+
+        if last_exc is not None:
+            return _err(f"涨停板数据获取失败: {last_exc}")
+        if user_date:
+            return _err(f"未获取到 {user_date} 涨停板数据（非交易日或源站暂无）")
+        hint = last_all_empty or resolved
+        return _err(f"未获取到涨停板数据（已尝试至 {hint}）")
     except Exception as e:
         return _err(f"涨停板数据获取失败: {e}")
 
