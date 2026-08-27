@@ -22,6 +22,15 @@ PIT_SENSITIVE_TOOLS = frozenset({
 
 _local = threading.local()
 
+_NON_EVIDENCE_TOOLS = frozenset({
+    "get_current_time",
+    "grep",
+    "list_run_evidence",
+    "load_skill",
+    "read",
+    "read_agent_report",
+})
+
 
 @dataclass
 class ResearchRunContext:
@@ -38,6 +47,37 @@ def set_run_context(ctx: ResearchRunContext | None) -> None:
 
 def get_run_context() -> ResearchRunContext | None:
     return getattr(_local, "ctx", None)
+
+
+def run_with_context(
+    ctx: ResearchRunContext | None,
+    research_active: bool,
+    fn,
+    /,
+    *args,
+    **kwargs,
+):
+    """Run work in a child thread with the caller's research context bound.
+
+    ``threading.local`` values are not inherited by ``ThreadPoolExecutor``
+    workers.  Tool calls need the context for PIT gates, audit logging and UI
+    suppression, so bind it explicitly and always release the worker's SQLite
+    connection before the thread is returned to the pool.
+    """
+    previous_ctx = get_run_context()
+    previous_active = is_research_run_active()
+    set_run_context(ctx)
+    set_research_run_active(research_active)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        if ctx is not None:
+            try:
+                ctx.store.close_thread()
+            except Exception:
+                pass
+        set_run_context(previous_ctx)
+        set_research_run_active(previous_active)
 
 
 def set_research_run_active(active: bool = True) -> None:
@@ -80,12 +120,13 @@ def log_tool_call(
     result: str,
     *,
     success: bool = True,
-) -> None:
+) -> str | None:
     rc = get_run_context()
     if rc is None:
-        return
+        return None
+    evidence_id: str | None = None
     try:
-        rc.store.log_tool_call(
+        tool_call_id = rc.store.log_tool_call(
             rc.run_id,
             rc.agent_name,
             tool_name,
@@ -93,12 +134,20 @@ def log_tool_call(
             result[:4000],
             success=success,
         )
+        if success and rc.agent_name and tool_name not in _NON_EVIDENCE_TOOLS:
+            evidence_id = _register_tool_evidence(
+                rc,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                result=result,
+            )
     except Exception:
         pass
     if rc.agent_name:
         try:
-            from ui.web.agent_progress import emit_agent_progress
-            emit_agent_progress({
+            from ui.web.collaboration_progress import emit_collaboration_progress
+            emit_collaboration_progress({
                 "phase": "agent_tool",
                 "run_id": rc.run_id,
                 "agent": rc.agent_name,
@@ -108,3 +157,66 @@ def log_tool_call(
             })
         except Exception:
             pass
+    return evidence_id
+
+
+def _json_dict(raw: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _first_symbol(arguments: dict[str, Any], result: dict[str, Any]) -> str:
+    for obj in (arguments, result.get("data"), result):
+        if not isinstance(obj, dict):
+            continue
+        for key in ("symbol", "code"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().upper()
+        codes = obj.get("codes")
+        if isinstance(codes, list) and codes and isinstance(codes[0], str):
+            return codes[0].strip().upper()
+    return ""
+
+
+def _register_tool_evidence(
+    rc: ResearchRunContext,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    arguments: str,
+    result: str,
+) -> str | None:
+    """Create a canonical evidence record for a successful research tool call."""
+    result_obj = _json_dict(result)
+    argument_obj = _json_dict(arguments)
+    meta = result_obj.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+
+    source = str(result_obj.get("source") or meta.get("source") or tool_name)
+    as_of = str(
+        result_obj.get("as_of_time")
+        or result_obj.get("as_of")
+        or meta.get("as_of_time")
+        or meta.get("as_of")
+        or ""
+    )
+    quality = str(result_obj.get("quality") or meta.get("quality") or "unknown")
+    pit_safe = result_obj.get("pit_safe") is True or meta.get("pit_safe") is True
+    record = rc.store.add_evidence(
+        rc.run_id,
+        symbol=_first_symbol(argument_obj, result_obj),
+        source=source,
+        as_of_time=as_of,
+        pit_safe=pit_safe,
+        quality=quality,
+        extra={
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+        },
+    )
+    return record.evidence_id

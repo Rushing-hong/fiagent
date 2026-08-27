@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from typing import Literal
 
 from core.llm.catalog import (
@@ -15,6 +17,9 @@ from core.llm.catalog import (
 from paths import DATA_DIR
 
 PREFS_PATH = DATA_DIR / "ui_prefs.json"
+_prefs_lock = threading.RLock()
+_prefs_cache_key: tuple[str, int, int] | tuple[str, None, None] | None = None
+_prefs_cache: dict | None = None
 
 ThinkingMode = Literal["show", "hide"]
 UIMode = Literal["tui", "plain", "web"]
@@ -48,17 +53,57 @@ MODEL_ALIASES: dict[str, str] = {
 
 
 def load_prefs() -> dict:
-    if not PREFS_PATH.exists():
-        return {}
-    try:
-        return json.loads(PREFS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
+    """Load preferences with mtime invalidation and defensive copies."""
+    global _prefs_cache_key, _prefs_cache
+    path_key = str(PREFS_PATH.resolve(strict=False))
+    with _prefs_lock:
+        try:
+            stat = PREFS_PATH.stat()
+            cache_key: tuple[str, int, int] | tuple[str, None, None] = (
+                path_key,
+                stat.st_mtime_ns,
+                stat.st_size,
+            )
+        except OSError:
+            cache_key = (path_key, None, None)
+        if _prefs_cache_key == cache_key and _prefs_cache is not None:
+            return dict(_prefs_cache)
+        try:
+            raw = json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+            prefs = raw if isinstance(raw, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            prefs = {}
+        _prefs_cache_key = cache_key
+        _prefs_cache = dict(prefs)
+        return dict(prefs)
 
 
 def save_prefs(prefs: dict) -> None:
-    PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PREFS_PATH.write_text(json.dumps(prefs, ensure_ascii=False, indent=2), encoding="utf-8")
+    """Atomically persist preferences so readers never observe partial JSON."""
+    global _prefs_cache_key, _prefs_cache
+    with _prefs_lock:
+        PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = PREFS_PATH.with_name(
+            f".{PREFS_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            temp_path.write_text(
+                json.dumps(prefs, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(temp_path, PREFS_PATH)
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        stat = PREFS_PATH.stat()
+        _prefs_cache_key = (
+            str(PREFS_PATH.resolve(strict=False)),
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+        _prefs_cache = dict(prefs)
 
 
 def get_thinking_mode() -> ThinkingMode:
@@ -67,9 +112,10 @@ def get_thinking_mode() -> ThinkingMode:
 
 
 def set_thinking_mode(mode: ThinkingMode) -> ThinkingMode:
-    prefs = load_prefs()
-    prefs["thinking_mode"] = mode
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        prefs["thinking_mode"] = mode
+        save_prefs(prefs)
     return mode
 
 
@@ -86,9 +132,10 @@ def get_ui_mode() -> UIMode:
 def set_ui_mode(mode: UIMode) -> UIMode:
     if mode not in ("tui", "plain", "web"):
         raise ValueError(f"未知界面模式: {mode}")
-    prefs = load_prefs()
-    prefs["ui_mode"] = mode
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        prefs["ui_mode"] = mode
+        save_prefs(prefs)
     return mode
 
 
@@ -133,9 +180,10 @@ def set_model(model: str) -> ModelId:
     resolved = resolve_model_id(model)
     if resolved is None:
         raise ValueError(f"未知模型: {model}")
-    prefs = load_prefs()
-    prefs["model"] = resolved
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        prefs["model"] = resolved
+        save_prefs(prefs)
     return resolved
 
 
@@ -164,9 +212,10 @@ def get_reasoning_effort() -> ReasoningEffort:
 def set_reasoning_effort(effort: str) -> ReasoningEffort:
     if effort not in AVAILABLE_EFFORTS:
         raise ValueError(f"未知思考强度: {effort}")
-    prefs = load_prefs()
-    prefs["reasoning_effort"] = effort
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        prefs["reasoning_effort"] = effort
+        save_prefs(prefs)
     return effort  # type: ignore[return-value]
 
 
@@ -181,12 +230,13 @@ def get_last_session_id() -> str | None:
 
 
 def set_last_session_id(session_id: str | None) -> None:
-    prefs = load_prefs()
-    if session_id:
-        prefs["last_session_id"] = session_id
-    else:
-        prefs.pop("last_session_id", None)
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        if session_id:
+            prefs["last_session_id"] = session_id
+        else:
+            prefs.pop("last_session_id", None)
+        save_prefs(prefs)
 
 
 # --- tools / skills enable toggles（opt-out）---
@@ -233,26 +283,28 @@ def set_tool_enabled(name: str, enabled: bool) -> bool:
     """启用/禁用工具；返回最终是否启用。元工具始终启用。"""
     if name in ALWAYS_ON_TOOLS:
         return True
-    prefs = load_prefs()
-    disabled = _as_str_set(prefs.get("disabled_tools"))
-    if enabled:
-        disabled.discard(name)
-    else:
-        disabled.add(name)
-    prefs["disabled_tools"] = sorted(disabled)
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        disabled = _as_str_set(prefs.get("disabled_tools"))
+        if enabled:
+            disabled.discard(name)
+        else:
+            disabled.add(name)
+        prefs["disabled_tools"] = sorted(disabled)
+        save_prefs(prefs)
     return enabled
 
 
 def set_skill_enabled(name: str, enabled: bool) -> bool:
-    prefs = load_prefs()
-    disabled = _as_str_set(prefs.get("disabled_skills"))
-    if enabled:
-        disabled.discard(name)
-    else:
-        disabled.add(name)
-    prefs["disabled_skills"] = sorted(disabled)
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        disabled = _as_str_set(prefs.get("disabled_skills"))
+        if enabled:
+            disabled.discard(name)
+        else:
+            disabled.add(name)
+        prefs["disabled_skills"] = sorted(disabled)
+        save_prefs(prefs)
     return enabled
 
 
@@ -277,14 +329,15 @@ def is_mcp_tool_enabled(name: str) -> bool:
 
 
 def set_mcp_tool_enabled(name: str, enabled: bool) -> bool:
-    prefs = load_prefs()
-    disabled = _as_str_set(prefs.get("disabled_mcp_tools"))
-    if enabled:
-        disabled.discard(name)
-    else:
-        disabled.add(name)
-    prefs["disabled_mcp_tools"] = sorted(disabled)
-    save_prefs(prefs)
+    with _prefs_lock:
+        prefs = load_prefs()
+        disabled = _as_str_set(prefs.get("disabled_mcp_tools"))
+        if enabled:
+            disabled.discard(name)
+        else:
+            disabled.add(name)
+        prefs["disabled_mcp_tools"] = sorted(disabled)
+        save_prefs(prefs)
     return enabled
 
 

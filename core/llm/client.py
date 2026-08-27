@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from openai import OpenAI
 
+from core.config import env_float
 from core.llm.catalog import get_model_spec
 from core.llm.providers import PROVIDERS, Provider, get_provider
 
@@ -50,9 +51,9 @@ def clear_client_cache() -> None:
 
 def llm_http_timeout() -> httpx.Timeout:
     """Streaming + thinking can idle a long time before the first chunk."""
-    connect = float(os.getenv("FIAGENT_LLM_CONNECT_TIMEOUT", "30"))
-    read = float(os.getenv("FIAGENT_LLM_READ_TIMEOUT", "600"))
-    write = float(os.getenv("FIAGENT_LLM_WRITE_TIMEOUT", "120"))
+    connect = env_float("FIAGENT_LLM_CONNECT_TIMEOUT", 30, minimum=1, maximum=600)
+    read = env_float("FIAGENT_LLM_READ_TIMEOUT", 600, minimum=1, maximum=3600)
+    write = env_float("FIAGENT_LLM_WRITE_TIMEOUT", 120, minimum=1, maximum=1200)
     return httpx.Timeout(connect=connect, read=read, write=write, pool=connect)
 
 

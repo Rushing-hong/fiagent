@@ -228,6 +228,7 @@ class EvidenceStore:
             "status": row["status"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "tasks": self.list_tasks(run_id),
             "reports": self.list_reports(run_id),
             "evidence": [
                 {
@@ -302,6 +303,52 @@ class EvidenceStore:
         payload = dict(extra or {})
         if fields:
             payload["fields"] = fields
+        declared_id = payload.get("evidence_id")
+        if (
+            isinstance(declared_id, str)
+            and declared_id.startswith(f"EV-{run_id}-")
+        ):
+            existing = self._conn().execute(
+                "SELECT * FROM evidence WHERE evidence_id = ? AND run_id = ?",
+                (declared_id, run_id),
+            ).fetchone()
+            if existing is not None:
+                existing_payload = json.loads(existing["payload"])
+                existing_payload.update(payload)
+                merged_symbol = symbol or existing["symbol"] or ""
+                merged_source = source or existing["source"] or ""
+                merged_as_of = as_of_time or existing["as_of_time"] or ""
+                merged_pit_safe = bool(pit_safe or existing["pit_safe"])
+                merged_quality = (
+                    quality
+                    if quality and quality != "unknown"
+                    else existing["quality"]
+                )
+                blob = json.dumps(existing_payload, ensure_ascii=False, sort_keys=True)
+                self._conn().execute(
+                    "UPDATE evidence SET symbol = ?, source = ?, as_of_time = ?, "
+                    "pit_safe = ?, quality = ?, payload = ? WHERE evidence_id = ?",
+                    (
+                        merged_symbol,
+                        merged_source,
+                        merged_as_of,
+                        int(merged_pit_safe),
+                        merged_quality,
+                        blob,
+                        declared_id,
+                    ),
+                )
+                self._conn().commit()
+                return EvidenceRecord(
+                    evidence_id=declared_id,
+                    run_id=run_id,
+                    symbol=merged_symbol,
+                    source=merged_source,
+                    as_of_time=merged_as_of,
+                    pit_safe=merged_pit_safe,
+                    quality=merged_quality,
+                    payload=existing_payload,
+                )
         blob = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         digest = hashlib.sha256(blob.encode()).hexdigest()[:12]
         ev_id = f"EV-{run_id}-{digest}"
@@ -359,6 +406,21 @@ class EvidenceStore:
             (status, _now(), task_id),
         )
         self._conn().commit()
+
+    def list_tasks(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn().execute(
+            "SELECT id, agent_name, status, depends_on, created_at, finished_at "
+            "FROM agent_tasks WHERE run_id = ? ORDER BY created_at, id",
+            (run_id,),
+        ).fetchall()
+        return [{
+            "task_id": row["id"],
+            "agent_name": row["agent_name"],
+            "status": row["status"],
+            "depends_on": json.loads(row["depends_on"] or "[]"),
+            "created_at": row["created_at"],
+            "finished_at": row["finished_at"],
+        } for row in rows]
 
     def close_thread(self) -> None:
         """Release the connection owned by the current worker thread."""

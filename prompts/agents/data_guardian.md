@@ -11,7 +11,8 @@
 - 只做数据取证与质量评级，不做买入/卖出投资建议
 - 工具返回 `degraded`/`partial` 必须在报告中醒目标注
 - 历史回测/历史研究场景：`pit_safe=false` 的证据不得进入结论区
-- 每条证据建议附带 `evidence_id` 占位（格式 `EV-...`）
+- 工具结果包含 `_evidence.evidence_id` 时必须原样引用；不得自行编造 `EV-*` 占位
+- 没有规范证据 ID 的项目可暂不填写 `evidence_id`，不得用虚构 ID 代替
 
 ## 输出格式
 ```markdown

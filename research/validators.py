@@ -15,6 +15,7 @@ from research.schemas import (
 )
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.I)
+_QUANT_BACKTEST_TOOLS = frozenset({"run_backtest", "run_python"})
 
 
 def extract_json_objects(text: str) -> list[Any]:
@@ -86,6 +87,81 @@ def validate_quant_card(data: dict[str, Any]) -> tuple[bool, list[str]]:
         if str(lr).lower() not in ("true", "false"):
             errors.append("live_readiness 须为 boolean")
     return len(errors) == 0, errors
+
+
+def validate_quant_tool_evidence(
+    data: dict[str, Any] | None,
+    tool_calls: list[dict[str, Any]],
+) -> list[str]:
+    """Prevent an A-C backtest grade when no calculation actually succeeded."""
+    if not isinstance(data, dict):
+        return []
+    grade = str(data.get("backtest_grade") or "").upper()
+    successful = {
+        str(call.get("tool_name") or "")
+        for call in tool_calls
+        if call.get("success") is True
+    }
+    if grade in {"A", "B", "C"} and not successful.intersection(_QUANT_BACKTEST_TOOLS):
+        return [
+            "backtest_grade A-C 必须有成功的 run_backtest/run_python 计算证据；"
+            "否则降为 D 且 live_readiness=false"
+        ]
+    return []
+
+
+def validate_evidence_references(
+    data: dict[str, Any] | None,
+    evidence: list[Any],
+) -> list[str]:
+    """Reject structured cards that cite evidence absent from the run ledger."""
+    if not isinstance(data, dict):
+        return []
+
+    referenced: set[str] = set()
+    evidence_items = data.get("evidence")
+    if isinstance(evidence_items, list):
+        for item in evidence_items:
+            if not isinstance(item, dict):
+                continue
+            ref = item.get("evidence_id")
+            if isinstance(ref, str) and ref.strip():
+                referenced.add(ref.strip())
+    for field in ("evidence_ids", "evidence_refs"):
+        values = data.get(field)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                referenced.add(value.strip())
+            elif isinstance(value, dict):
+                ref = value.get("evidence_id") or value.get("id")
+                if isinstance(ref, str) and ref.strip():
+                    referenced.add(ref.strip())
+
+    if not referenced:
+        return []
+
+    available: set[str] = set()
+    for item in evidence:
+        canonical = getattr(item, "evidence_id", None)
+        payload = getattr(item, "payload", None)
+        if isinstance(item, dict):
+            canonical = item.get("evidence_id", canonical)
+            payload = item.get("payload", payload)
+        if isinstance(canonical, str) and canonical:
+            available.add(canonical)
+        if isinstance(payload, dict):
+            alias = payload.get("evidence_id")
+            if isinstance(alias, str) and alias:
+                available.add(alias)
+
+    missing = sorted(referenced - available)
+    if not missing:
+        return []
+    preview = ", ".join(missing[:8])
+    suffix = " …" if len(missing) > 8 else ""
+    return [f"引用了当前 run 未登记的 evidence_id: {preview}{suffix}"]
 
 
 def validate_cio_claim(data: dict[str, Any]) -> tuple[bool, list[str]]:

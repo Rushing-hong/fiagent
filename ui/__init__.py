@@ -36,12 +36,12 @@ def _agent_ui_emit(ui_type: str, **data: Any) -> bool:
     """Route sub-agent UI to Web agent panel (mirrors main chat SSE types)."""
     try:
         from research.run_context import get_run_context, suppress_main_chat_ui
-        from ui.web.agent_progress import emit_agent_progress
+        from ui.web.collaboration_progress import emit_collaboration_progress
 
         if not suppress_main_chat_ui():
             return False
         rc = get_run_context()
-        emit_agent_progress({
+        emit_collaboration_progress({
             "phase": "agent_ui",
             "run_id": rc.run_id if rc else "",
             "agent": (rc.agent_name if rc and rc.agent_name else "orchestrator"),
@@ -56,10 +56,10 @@ def _agent_ui_emit(ui_type: str, **data: Any) -> bool:
 def _emit_research_rail_log(message: str, *, level: str = "info") -> None:
     try:
         from research.run_context import get_run_context
-        from ui.web.agent_progress import emit_agent_progress
+        from ui.web.collaboration_progress import emit_collaboration_progress
 
         rc = get_run_context()
-        emit_agent_progress({
+        emit_collaboration_progress({
             "phase": "agent_log",
             "run_id": rc.run_id if rc else "",
             "agent": (rc.agent_name if rc and rc.agent_name else "orchestrator"),

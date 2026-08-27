@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,6 +17,7 @@ from typing import Any
 from openai import OpenAI
 
 from core.context import AgentContext
+from core.config import env_int
 from core.context_budget import estimate_context_usage
 from core.message_sanitize import slim_messages_for_api
 from core.stream import stream_chat_completion
@@ -27,12 +27,16 @@ from hooks.registry import HookRegistry
 from ui import ui
 
 # 可选软上限（最后一步关工具做总结）；默认偏大，避免排行失败后立刻被掐
-MAX_TOOL_ROUNDS = int(os.environ.get("FIAGENT_MAX_TOOL_ROUNDS", "40"))
-MAX_READONLY_WORKERS = int(os.environ.get("FIAGENT_MAX_READONLY_WORKERS", "8"))
+MAX_TOOL_ROUNDS = env_int("FIAGENT_MAX_TOOL_ROUNDS", 40, minimum=2, maximum=200)
+MAX_READONLY_WORKERS = env_int(
+    "FIAGENT_MAX_READONLY_WORKERS", 8, minimum=1, maximum=32
+)
 # 连续相同 name+args 次数达到阈值 → 拒绝该次（OpenCode doom_loop=3）
-DOOM_LOOP_AT = int(os.environ.get("FIAGENT_DOOM_LOOP_AT", "3"))
+DOOM_LOOP_AT = env_int("FIAGENT_DOOM_LOOP_AT", 3, minimum=0, maximum=20)
 # 末步若模型仍死磕工具，最多再拒几次后强制结束
-_POST_LIMIT_REFUSALS = int(os.environ.get("FIAGENT_POST_LIMIT_REFUSALS", "2"))
+_POST_LIMIT_REFUSALS = env_int(
+    "FIAGENT_POST_LIMIT_REFUSALS", 2, minimum=1, maximum=10
+)
 
 _call_counts_lock = threading.Lock()
 
@@ -56,6 +60,54 @@ _DOOM_LOOP_MSG = (
 _TOOLS_DISABLED_MSG = (
     "【步骤上限】工具已禁用。请用纯文本总结已完成与未完成事项，勿再请求工具。"
 )
+
+
+def _tool_result_succeeded(result: str) -> bool:
+    """Interpret the common tool envelope instead of treating execution as success."""
+    text = str(result or "").strip()
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        lowered = text.lower()
+        return not any(
+            marker in lowered
+            for marker in (
+                "pit_gate_blocked",
+                '"ok": false',
+                '"status": "error"',
+                "工具调用被 hook 拦截",
+                "不在当前 agent 授权范围",
+                "已被用户禁用",
+            )
+        )
+    if isinstance(payload, dict):
+        if payload.get("ok") is False:
+            return False
+        if str(payload.get("status") or "").lower() in {
+            "error",
+            "failed",
+            "blocked",
+        }:
+            return False
+    return True
+
+
+def _attach_evidence_id(result: str, evidence_id: str | None) -> str:
+    """Expose the canonical evidence id to the model without changing failures."""
+    if not evidence_id:
+        return result
+    try:
+        payload = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return result
+    if not isinstance(payload, dict):
+        return result
+    evidence = payload.get("_evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    evidence["evidence_id"] = evidence_id
+    payload["_evidence"] = evidence
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def assistant_message(msg: Any) -> dict[str, Any]:
@@ -191,8 +243,9 @@ def run_tool_with_hooks(
 
     try:
         from research.run_context import log_tool_call as _log_tc
-        success = '"status": "error"' not in result and "PIT_GATE_BLOCKED" not in result
-        _log_tc(name, arguments, result, success=success)
+        success = _tool_result_succeeded(result)
+        evidence_id = _log_tc(name, arguments, result, success=success)
+        result = _attach_evidence_id(result, evidence_id)
     except ImportError:
         pass
 
@@ -232,13 +285,39 @@ def _execute_tool_calls(
 
     results: dict[str, str] = {}
 
-    if readonly:
+    if len(readonly) == 1:
+        # The common case is a single tool call. Avoid constructing a thread
+        # pool unless there is actual parallel work to schedule.
+        tc = readonly[0]
+        try:
+            results[tc.id] = run_tool_with_hooks(
+                hooks,
+                ctx,
+                tc.function.name,
+                tc.function.arguments,
+                call_counts,
+                recent_sigs,
+            )
+        except Exception as exc:
+            results[tc.id] = f"工具执行异常: {exc}"
+    elif readonly:
+        from research.run_context import (
+            get_run_context,
+            is_research_run_active,
+            run_with_context,
+        )
+
+        research_ctx = get_run_context()
+        research_active = is_research_run_active()
         workers = min(MAX_READONLY_WORKERS, len(readonly))
         pool = ThreadPoolExecutor(max_workers=workers)
         aborted_parallel = False
         try:
             futures = {
                 pool.submit(
+                    run_with_context,
+                    research_ctx,
+                    research_active,
                     run_tool_with_hooks,
                     hooks,
                     ctx,
@@ -292,6 +371,42 @@ def _refuse_tools(msg: Any, messages: list[dict[str, Any]]) -> None:
         })
 
 
+def _prepare_round_request(
+    messages: list[dict[str, Any]],
+    ctx: AgentContext,
+    hooks: HookRegistry,
+    *,
+    step: int,
+    is_last: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str] | None:
+    """Build one API request consistently for interactive and headless turns."""
+    tools = [] if is_last else ctx.build_openai_tools(messages)
+    tool_choice = "none" if is_last else "auto"
+    llm_before = hooks.emit("llm.before", {
+        "messages": messages,
+        "tools": tools,
+        "round_idx": step,
+    })
+    if llm_before.cancel:
+        return None
+
+    req_messages = llm_before.get("messages", messages)
+    req_tools = [] if is_last else llm_before.get("tools", tools)
+    req_messages = slim_messages_for_api(
+        req_messages,
+        is_readonly=ctx.is_readonly_tool,
+        tools=req_tools,
+    )
+    req_messages = ctx.with_runtime_context_for_api(req_messages)
+    req_messages = ctx.with_clock_for_api(req_messages)
+    if is_last:
+        # API-only reminder; do not pollute persisted session history.
+        req_messages = list(req_messages) + [
+            {"role": "user", "content": _MAX_STEPS_PROMPT},
+        ]
+    return req_messages, req_tools, tool_choice
+
+
 def run_agent_turn(
     client: OpenAI,
     messages: list[dict[str, Any]],
@@ -317,33 +432,13 @@ def run_agent_turn(
             if step == 1:
                 ctx.refresh()
             ctx.sync_system_message(messages)
-            tools = [] if is_last else ctx.build_openai_tools()
-            tool_choice = "none" if is_last else "auto"
-
-            llm_before = hooks.emit("llm.before", {
-                "messages": messages,
-                "tools": tools,
-                "round_idx": step,
-            })
-            if llm_before.cancel:
+            prepared = _prepare_round_request(
+                messages, ctx, hooks, step=step, is_last=is_last
+            )
+            if prepared is None:
                 ui.hook_blocked("LLM 调用被 hook 拦截")
                 return
-
-            req_messages = llm_before.get("messages", messages)
-            req_tools = llm_before.get("tools", tools)
-            if is_last:
-                req_tools = []
-            req_messages = slim_messages_for_api(
-                req_messages,
-                is_readonly=ctx.is_readonly_tool,
-                tools=req_tools,
-            )
-            req_messages = ctx.with_clock_for_api(req_messages)
-            if is_last:
-                # 仅 API 副本注入，不污染会话历史
-                req_messages = list(req_messages) + [
-                    {"role": "user", "content": _MAX_STEPS_PROMPT},
-                ]
+            req_messages, req_tools, tool_choice = prepared
 
             usage = estimate_context_usage(req_messages, req_tools)
             ui.show_context_progress(usage)
@@ -422,31 +517,12 @@ def collect_agent_turn(
         if step == 1:
             ctx.refresh()
         ctx.sync_system_message(messages)
-        tools = [] if is_last else ctx.build_openai_tools()
-        tool_choice = "none" if is_last else "auto"
-
-        llm_before = hooks.emit("llm.before", {
-            "messages": messages,
-            "tools": tools,
-            "round_idx": step,
-        })
-        if llm_before.cancel:
-            return ("LLM 调用被 hook 拦截", step)
-
-        req_messages = llm_before.get("messages", messages)
-        req_tools = llm_before.get("tools", tools)
-        if is_last:
-            req_tools = []
-        req_messages = slim_messages_for_api(
-            req_messages,
-            is_readonly=ctx.is_readonly_tool,
-            tools=req_tools,
+        prepared = _prepare_round_request(
+            messages, ctx, hooks, step=step, is_last=is_last
         )
-        req_messages = ctx.with_clock_for_api(req_messages)
-        if is_last:
-            req_messages = list(req_messages) + [
-                {"role": "user", "content": _MAX_STEPS_PROMPT},
-            ]
+        if prepared is None:
+            return ("LLM 调用被 hook 拦截", step)
+        req_messages, req_tools, tool_choice = prepared
 
         msg = stream_chat_completion(
             client,

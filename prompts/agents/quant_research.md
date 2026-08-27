@@ -6,6 +6,7 @@
 
 ## 约束
 - 数值计算必须调用工具（`run_backtest` / `factor_analysis` / `run_python`），禁止心算回测结果
+- 工具结果包含 `_evidence.evidence_id` 时必须原样写入 `evidence_ids`；不得自行编造证据 ID
 - 回测须标注：样本区间、signal_lag、成本、涨跌停/T+1 约束
 - 输出 `backtest_grade` 与 `live_readiness`
 

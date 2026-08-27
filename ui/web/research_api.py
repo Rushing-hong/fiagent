@@ -35,6 +35,7 @@ def run_detail_payload(run_id: str) -> dict:
         detail = store.get_run_detail(run_id)
         if not detail:
             return {"status": "error", "error": f"run not found: {run_id}"}
+        detail["run_status"] = detail.get("status", "unknown")
         detail["status"] = "ok"
         detail["agent_labels"] = _AGENT_LABELS
         return detail

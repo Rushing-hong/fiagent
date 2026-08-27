@@ -8,19 +8,30 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Pixelify+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/desk.css?v=20260731d" />
-  <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script defer src="/static/desk.js?v=20260731d"></script>
-  <script defer src="/static/desk-team.js?v=20260731d"></script>
+  <link rel="stylesheet" href="/static/desk.css?v=20260810c" />
+  <script defer src="/static/marked.min.js?v=12.0.2"></script>
+  <script defer src="/static/desk.js?v=20260810c"></script>
+  <script defer src="/static/desk-collaboration.js?v=20260810c"></script>
 </head>
 <body>
+  <div id="connection-banner" class="connection-banner hidden" role="status" aria-live="polite">
+    <span class="connection-dot" aria-hidden="true"></span>
+    <span id="connection-message">与本地服务的连接已中断</span>
+    <button type="button" id="connection-retry">立即重试</button>
+  </div>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
   <section id="welcome">
     <div class="welcome-inner">
       <img class="welcome-logo" src="/static/assets/atrading-pixel-mark.png" width="72" height="72" alt="" />
       <h1 id="welcome-title">Atrading</h1>
       <p class="sub" id="welcome-sub">A股投研助手 · 行情 · 回测 · 复盘</p>
+      <div id="welcome-health" class="welcome-health checking" role="status">
+        <span class="health-dot" aria-hidden="true"></span>
+        <span id="welcome-health-main">正在检查模型配置…</span>
+        <span id="welcome-health-detail"></span>
+      </div>
       <div class="examples" id="examples"></div>
-      <div class="agent-launch-welcome" id="agent-launch-welcome"></div>
       <div class="welcome-actions">
         <button type="button" class="btn btn-primary" id="btn-new">开始新会话</button>
         <button type="button" class="btn btn-ghost" id="btn-continue">继续上次</button>
@@ -44,24 +55,13 @@
         </div>
 
         <div class="sb-section">
-          <div class="sb-label">启动 Agent</div>
-          <nav class="sb-nav sb-agent-launch" id="sb-agent-launch">
-            <button type="button" data-agent-mode="fast" class="active" title="单 Agent，适合查行情、筛选">单 Agent</button>
-            <button type="button" data-agent-mode="research" title="多专家研究团队">研究团队</button>
-            <button type="button" data-agent-mode="committee" title="完整投资委员会+政策门">投资委员会</button>
-            <button type="button" data-agent-mode="review" title="交易日记复盘">交易复盘</button>
-          </nav>
-          <div class="sb-agent-quick" id="sb-agent-quick"></div>
-        </div>
-
-        <div class="sb-section">
           <div class="sb-label">快捷</div>
           <nav class="sb-nav" id="sb-features">
             <button type="button" data-feature="screen" title="涨跌幅榜">涨跌榜</button>
             <button type="button" data-feature="limit" title="涨停板复盘">涨停板</button>
             <button type="button" data-feature="fund" title="基本面选股">选股</button>
             <button type="button" data-feature="backtest" title="策略回测">回测</button>
-            <button type="button" data-feature="team" title="研究团队与证据账本">研究团队</button>
+            <button type="button" data-feature="collaboration" title="查看协作任务">协作任务</button>
             <button type="button" data-feature="evals" title="A/B/C/D 评估">评估</button>
           </nav>
         </div>
@@ -107,18 +107,44 @@
 
         <main id="chat" aria-live="polite"></main>
 
+        <section id="collaboration-view" class="collaboration-view hidden" aria-hidden="true">
+          <div class="collaboration-view-head">
+            <button type="button" class="collaboration-back" id="collaboration-back">← 主对话</button>
+            <div class="collaboration-heading">
+              <div class="collaboration-eyebrow">AGENT TASK</div>
+              <h2 id="collaboration-title">协作任务</h2>
+              <p id="collaboration-subtitle">选择一个子 Agent 查看执行过程</p>
+            </div>
+            <button type="button" class="collaboration-refresh" id="collaboration-refresh" title="刷新任务详情">刷新</button>
+          </div>
+          <div class="collaboration-layout">
+            <nav class="collaboration-nav" aria-label="子 Agent 列表">
+              <div class="collaboration-run-summary" id="collaboration-run-summary"></div>
+              <div class="collaboration-agent-list" id="collaboration-agent-list"></div>
+            </nav>
+            <article class="collaboration-thread">
+              <header class="collaboration-thread-head" id="collaboration-thread-head"></header>
+              <div class="collaboration-timeline" id="collaboration-timeline"></div>
+            </article>
+          </div>
+        </section>
+
         <div class="composer-wrap">
           <div id="composer-activity" class="composer-activity hidden" aria-live="polite">
             <span class="dot" aria-hidden="true"></span>
             <span id="composer-activity-text">运行中…</span>
           </div>
-          <div class="agent-mode-bar" id="agent-mode-bar" role="toolbar" aria-label="Agent 模式">
-            <span class="agent-mode-label">模式</span>
-            <button type="button" class="agent-mode-btn active" data-agent-mode="fast" title="单 Agent ReAct">单 Agent</button>
-            <button type="button" class="agent-mode-btn" data-agent-mode="research" title="Data→专家→Red-Team→CIO">研究团队</button>
-            <button type="button" class="agent-mode-btn" data-agent-mode="committee" title="研究团队+合规/风险/执行">投资委员会</button>
-            <button type="button" class="agent-mode-btn" data-agent-mode="review" title="交易日记归因复盘">交易复盘</button>
-            <span class="agent-mode-hint" id="agent-mode-hint">查行情、筛选、单次分析</span>
+          <div class="collaboration-toolbar" id="collaboration-toolbar">
+            <button type="button" class="collaboration-trigger" id="collaboration-trigger" aria-haspopup="menu" aria-expanded="false">
+              <span aria-hidden="true">＋</span> Agent 协作
+            </button>
+            <div class="collaboration-selection hidden" id="collaboration-selection">
+              <span class="collaboration-selection-dot" aria-hidden="true"></span>
+              <span id="collaboration-selection-label"></span>
+              <span class="collaboration-selection-note">仅下一条消息</span>
+              <button type="button" id="collaboration-clear" title="取消协作">×</button>
+            </div>
+            <div class="collaboration-menu hidden" id="collaboration-menu" role="menu" aria-label="选择协作方式"></div>
           </div>
           <div id="slash-menu" class="slash-menu hidden"></div>
           <div class="composer">
@@ -145,23 +171,6 @@
           </div>
         </div>
       </div>
-
-      <aside id="agent-panel" class="agent-panel" aria-label="子 Agent 详情" aria-hidden="true">
-        <div class="agent-panel-head">
-          <span id="agent-panel-title">子 Agent</span>
-          <button type="button" class="sb-toggle" id="agent-panel-close" title="关闭">›</button>
-        </div>
-        <div class="agent-panel-meta" id="agent-panel-meta"></div>
-        <div class="agent-panel-dag at-dag" id="agent-panel-dag"></div>
-        <div class="agent-panel-section">
-          <div class="rail-label">执行轨迹</div>
-          <div class="agent-panel-timeline" id="agent-panel-timeline"></div>
-        </div>
-        <div class="agent-panel-section">
-          <div class="rail-label">报告预览</div>
-          <div class="agent-panel-preview" id="agent-panel-preview"></div>
-        </div>
-      </aside>
 
       <aside id="rail" class="rail" aria-label="右侧检视">
         <div class="rail-head">
@@ -191,16 +200,10 @@
         <section class="rail-section rail-run">
           <div class="rail-label-row">
             <div class="rail-label">本轮运行</div>
-            <button type="button" class="sb-link" id="rail-team-open" title="研究团队历史">Run 账本</button>
             <button type="button" class="rail-abort" id="rail-abort" disabled>中止</button>
           </div>
           <div class="rail-activity" id="rail-activity">就绪</div>
           <div class="rail-sub" id="rail-round"></div>
-          <div class="rail-agent-dock" id="rail-agent-dock">
-            <div class="rail-agent-team" id="rail-agent-team">
-              <div class="rail-empty">Research/Committee 模式启动后显示</div>
-            </div>
-          </div>
           <details class="rail-fold" id="rail-think-fold">
             <summary class="rail-fold-label">思考</summary>
             <div class="rail-think-body" id="rail-think-body">—</div>

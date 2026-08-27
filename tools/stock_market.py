@@ -9,6 +9,7 @@ from market.eastmoney import push2_diff_rows, search_suggest
 from market.envelope import clamp_int, err, ok
 from market.http import throttled_get_json
 from market.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
+from market.symbol_search import search_tencent_suggest
 from tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -101,10 +102,12 @@ class SearchSymbolTool(BaseTool):
         if not query:
             return err("query 不能为空")
         limit = clamp_int(args.get("limit"), 10, 1, 25)
+        eastmoney_error = ""
         try:
             rows = search_suggest(query, count=25)
         except Exception as exc:
-            return err(f"东财搜索失败: {exc}")
+            rows = []
+            eastmoney_error = str(exc)
 
         candidates: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -136,10 +139,16 @@ class SearchSymbolTool(BaseTool):
             })
             if len(candidates) >= limit:
                 break
+        if not candidates:
+            try:
+                candidates = search_tencent_suggest(query, count=limit)
+            except Exception as exc:
+                detail = f"东财: {eastmoney_error or '无匹配'}；腾讯: {exc}"
+                return err(f"股票搜索失败: {detail}")
         return ok(
             {"query": query, "count": len(candidates), "candidates": candidates},
             market="cn",
-            source="eastmoney",
+            source=candidates[0]["source"] if candidates else "eastmoney/tencent",
         )
 
 

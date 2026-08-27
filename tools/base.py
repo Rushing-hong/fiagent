@@ -4,13 +4,35 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
-import os
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from core.config import env_int
+
 # Schema 注入用：过长 description 浪费每轮 tokens；不改工具内部文案
-_TOOL_DESC_MAX = int(os.environ.get("FIAGENT_TOOL_DESC_MAX", "160"))
+_TOOL_DESC_MAX = env_int("FIAGENT_TOOL_DESC_MAX", 96, minimum=32, maximum=512)
+_PARAM_DESC_MAX = env_int("FIAGENT_PARAM_DESC_MAX", 64, minimum=24, maximum=256)
+
+# These JSON Schema keywords contain maps whose keys are user-defined names,
+# not schema keywords.  For example, ``properties.description`` is a parameter
+# called "description"; it must not be mistaken for the schema annotation of
+# the same name while compacting tool definitions.
+_NAMED_SCHEMA_MAP_KEYS = frozenset({
+    "$defs",
+    "definitions",
+    "dependencies",
+    "dependentRequired",
+    "dependentSchemas",
+    "patternProperties",
+    "properties",
+})
+
+# Values under these keywords are JSON literals, not child schemas.  Walking
+# into an object-valued enum/const would incorrectly treat ordinary keys such
+# as ``title`` or ``default`` as schema annotations and delete them.
+_LITERAL_VALUE_KEYS = frozenset({"const", "enum"})
 
 
 def _clip_description(text: str, limit: int = _TOOL_DESC_MAX) -> str:
@@ -18,6 +40,56 @@ def _clip_description(text: str, limit: int = _TOOL_DESC_MAX) -> str:
     if len(t) <= limit:
         return t
     return t[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _compact_parameters(value: Any, *, named_schema_map: bool = False) -> Any:
+    """Copy a JSON schema while dropping annotation-only token overhead.
+
+    `default`, `examples`, and `title` do not affect function-call validation;
+    tool implementations already own their defaults. Structural constraints
+    (`type`, `required`, `enum`, bounds, nested properties) are preserved.
+    """
+    if isinstance(value, list):
+        return [_compact_parameters(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
+    for key, item in value.items():
+        if named_schema_map:
+            # Keys in properties/$defs/etc. are arbitrary user-defined names.
+            # Only compact each value, which is the actual child schema.
+            out[key] = _compact_parameters(item)
+            continue
+        if key in {"default", "examples", "title", "$schema"}:
+            continue
+        if key == "description":
+            clipped = _clip_description(str(item or ""), _PARAM_DESC_MAX)
+            if clipped:
+                out[key] = clipped
+            continue
+        if key in _LITERAL_VALUE_KEYS:
+            out[key] = deepcopy(item)
+            continue
+        compacted = _compact_parameters(
+            item,
+            named_schema_map=key in _NAMED_SCHEMA_MAP_KEYS,
+        )
+        if key == "required" and compacted == []:
+            continue
+        out[key] = compacted
+    return out
+
+
+def _compact_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    fn = schema.get("function")
+    if not isinstance(fn, dict):
+        return dict(schema)
+    compact_fn = dict(fn)
+    compact_fn["description"] = _clip_description(str(fn.get("description") or ""))
+    compact_fn["parameters"] = _compact_parameters(
+        fn.get("parameters") or {"type": "object", "properties": {}}
+    )
+    return {**schema, "function": compact_fn}
 
 
 class BaseTool(ABC):
@@ -39,13 +111,8 @@ class BaseTool(ABC):
 
     def to_openai_schema(self, ctx: Any = None) -> dict[str, Any]:
         if self.dynamic_schema:
-            schema = self.build_schema(ctx)
-            fn = schema.get("function")
-            if isinstance(fn, dict) and "description" in fn:
-                fn = {**fn, "description": _clip_description(str(fn.get("description") or ""))}
-                return {**schema, "function": fn}
-            return schema
-        return {
+            return _compact_tool_schema(self.build_schema(ctx))
+        return _compact_tool_schema({
             "type": "function",
             "function": {
                 "name": self.name,
@@ -56,7 +123,7 @@ class BaseTool(ABC):
                     "required": [],
                 },
             },
-        }
+        })
 
     def build_schema(self, ctx: Any) -> dict[str, Any]:
         return self.to_openai_schema(ctx)
@@ -69,6 +136,7 @@ class ToolRegistry:
         self._class_cache: dict[
             Path, tuple[tuple[int, int], list[type[BaseTool]]]
         ] = {}
+        self.generation = 0
         self.refresh()
 
     def _classes_in_module(self, module) -> list[type[BaseTool]]:
@@ -127,6 +195,7 @@ class ToolRegistry:
                 continue
             tool = cls()
             self._tools[tool.name] = tool
+        self.generation += 1
 
     def get(self, name: str) -> BaseTool | None:
         return self._tools.get(name)

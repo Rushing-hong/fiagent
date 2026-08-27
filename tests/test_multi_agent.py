@@ -54,6 +54,32 @@ def test_route_query_committee_for_buy_decision():
     assert route_query("茅台现在是否值得买入") == AgentMode.COMMITTEE
 
 
+def test_dispatch_defaults_to_main_agent_even_for_deep_wording():
+    from core.agents.dispatch import _resolve_turn_mode
+
+    mode, query = _resolve_turn_mode("深度分析宁德时代")
+    assert mode == AgentMode.FAST
+    assert query == "深度分析宁德时代"
+
+
+def test_dispatch_slash_command_remains_one_shot_collaboration():
+    from core.agents.dispatch import _resolve_turn_mode
+
+    mode, query = _resolve_turn_mode("/research 深度分析宁德时代")
+    assert mode == AgentMode.RESEARCH
+    assert query == "深度分析宁德时代"
+
+
+def test_dispatch_button_override_applies_to_one_turn_only():
+    from core.agents.dispatch import _resolve_turn_mode
+
+    selected, _ = _resolve_turn_mode("分析茅台", AgentMode.COMMITTEE)
+    following, _ = _resolve_turn_mode("继续解释一下")
+
+    assert selected == AgentMode.COMMITTEE
+    assert following == AgentMode.FAST
+
+
 def test_context_profile_tool_isolation():
     from paths import PROJECT_ROOT
 
@@ -70,6 +96,56 @@ def test_context_profile_blocks_unauthorized_tool():
     ctx = AgentContext(PROJECT_ROOT, profile=load_profile("red_team"))
     result = ctx.execute_tool("get_market_data", "{}")
     assert "授权范围" in result
+
+
+def test_quant_grade_requires_successful_calculation_tool():
+    from research.validators import validate_quant_tool_evidence
+
+    card = {"backtest_grade": "C", "live_readiness": False}
+    failed = [{"tool_name": "analyze_portfolio_risk", "success": False}]
+    assert validate_quant_tool_evidence(card, failed)
+    assert validate_quant_tool_evidence(
+        card,
+        [{"tool_name": "run_backtest", "success": True}],
+    ) == []
+    assert validate_quant_tool_evidence(
+        {"backtest_grade": "D", "live_readiness": False},
+        failed,
+    ) == []
+
+
+def test_research_run_is_partial_when_an_agent_failed():
+    from core.agents.orchestrator import _failed_report_keys
+
+    reports = {
+        "data": "ok",
+        "market": "失败: provider rejected request",
+        "company": "ok",
+        "research_done": "ok",
+    }
+    assert _failed_report_keys(reports) == ["market"]
+
+
+def test_all_agent_profiles_share_system_prefix():
+    from paths import PROJECT_ROOT
+
+    main = AgentContext(PROJECT_ROOT)
+    data = AgentContext(PROJECT_ROOT, profile=load_profile("data_guardian"))
+    red = AgentContext(PROJECT_ROOT, profile=load_profile("red_team"))
+
+    assert main.build_system_prompt() == data.build_system_prompt()
+    assert data.build_system_prompt() == red.build_system_prompt()
+    assert "今天：" not in main.build_system_prompt()
+    assert data.fresh_messages()[0] == red.fresh_messages()[0]
+
+    base_messages = data.fresh_messages() + [{"role": "user", "content": "检查数据"}]
+    request = data.with_runtime_context_for_api(base_messages)
+    assert request[0] == base_messages[0]
+    assert request[1]["role"] == "user"
+    assert request[1]["content"].startswith("【应用注入的 Agent 运行时约束】")
+    assert load_profile("data_guardian").system_prompt in request[1]["content"]
+    assert request[1]["content"].endswith("## 用户任务\n检查数据")
+    assert len(request) == len(base_messages)
 
 
 def test_task_graph_runs_dependencies_in_order():

@@ -110,7 +110,18 @@ def test_default_buy_hold_reserves_cost_buffer_and_fills():
     )
     assert result["ok"]
     assert result["config"]["position_pct"] == 0.95
-    assert result["metrics"]["total_trades"] >= 1
+    # Open buy-and-hold positions are not counted as closed trades.
+    assert result["metrics"]["total_trades"] == 0
+    assert result["metrics"]["fill_stats"]["filled"] == 1
+    assert result["metrics"]["total_return"] > 0
+
+
+def test_buy_hold_signal_stays_invested_after_entry():
+    from market.backtest_engine import _signal_buy_hold
+
+    df = _ohlcv(8)
+    signal = _signal_buy_hold(df)
+    assert signal.tolist() == [1.0] * len(df)
 
 
 def test_halt_skips_missing_bar_and_cash_interest():

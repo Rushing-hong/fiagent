@@ -1471,11 +1471,11 @@ class FiagentApp(App):
             from core.commands import HANDLED_REEXEC, HANDLED_RESTART
 
             low = user_input.strip().lower()
-            is_agent_team = (
+            is_collaboration_command = (
                 low.startswith("/research") or low.startswith("/committee")
                 or low.startswith("/review")
             )
-            if not is_agent_team:
+            if not is_collaboration_command:
                 if low in ("/sessions", "/session"):
                     self.call_from_thread(self.open_session_picker)
                     return

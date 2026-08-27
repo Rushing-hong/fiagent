@@ -65,6 +65,7 @@ SESSION_COMMANDS = {
     "/committee": "投委会模式（合规/风控/执行门），用法: /committee <问题>",
     "/review": "交易复盘，用法: /review <交割单路径或描述>",
     "/evals": "查看 Agent A/B 评估汇总（需 FIAGENT_EVAL=1）",
+    "/cache": "查看 Prompt Cache 实际命中率；/cache reset 清零",
     "/quit": "退出 Atrading（别名: /exit, /q）",
 }
 
@@ -110,6 +111,7 @@ _MENU_ORDER = (
     "/committee",
     "/review",
     "/evals",
+    "/cache",
     "/quit",
 )
 _MENU_RANK = {cmd: i for i, cmd in enumerate(_MENU_ORDER)}
@@ -281,6 +283,16 @@ def handle_session_command(
             ui.info(dashboard.get("message", "暂无评估记录"))
         else:
             ui.show_reply(format_dashboard_markdown(dashboard))
+        return current, None, True
+
+    if name == "/cache":
+        from core.llm.cache_metrics import format_cache_metrics, reset_cache_metrics
+
+        if arg.lower() in {"reset", "clear"}:
+            reset_cache_metrics()
+            ui.success("Prompt Cache 统计已清零")
+        else:
+            ui.info(format_cache_metrics())
         return current, None, True
 
     if name == "/sessions" or name == "/session":

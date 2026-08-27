@@ -7,34 +7,19 @@ class LoadSkillTool(BaseTool):
     name = "load_skill"
     summary = "加载 skill 完整指令"
     description = "加载本地 skill 的完整指令。匹配 description 时应先调用此工具。"
-    dynamic_schema = True
     is_readonly = True
-
-    def build_schema(self, ctx) -> dict:
-        # Skills 短索引已在 system prompt；此处不再嵌入全量 XML，避免每轮 schema 膨胀
-        names = [s.name for s in ctx.enabled_skills()]
-        name_prop: dict = {
-            "type": "string",
-            "description": "skill 名称（见 system 中 Skills 短索引）",
-        }
-        if names:
-            name_prop["enum"] = names
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": (
-                    "加载 skill 的完整 SKILL.md 正文（与取数 tools 同级，按需选用）。"
-                    "决定使用某个 skill 时先调用本工具获取全文，再按全文执行；"
-                    "不要只凭短描述臆造该 skill 的流程。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {"name": name_prop},
-                    "required": ["name"],
-                },
-            },
-        }
+    # Skill names already live in the system prompt. Repeating all 50 names as
+    # an enum in every request wastes tokens without adding new information.
+    parameters = {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "skill 名称（见 system prompt 的 Skills 索引）",
+            }
+        },
+        "required": ["name"],
+    }
 
     def execute(self, args: dict, ctx) -> str:
         from ui.prefs import is_skill_enabled

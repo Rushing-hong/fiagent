@@ -410,10 +410,10 @@ def _signal_rsi(
 
 def _signal_buy_hold(df: pd.DataFrame) -> pd.Series:
     """Buy at first bar, hold forever."""
-    signal = pd.Series(0.0, index=df.index)
-    if len(signal) > 0:
-        signal.iloc[0] = 1.0
-    return signal
+    # Signals represent the desired target weight on *every* bar.  Emitting a
+    # one-day pulse buys and then targets zero on the next bar, which is a
+    # one-day trade rather than buy-and-hold.
+    return pd.Series(1.0, index=df.index)
 
 
 def _signal_momentum(df: pd.DataFrame, window: int = 20) -> pd.Series:
@@ -552,6 +552,8 @@ class BacktestEngine:
         codes = list(data.keys())
         if not codes:
             return {"ok": False, "error": "no data provided"}
+
+        builtin_buy_hold = signal is None and not sleeves and strategy == "buy_hold"
 
         raw_dates = set().union(*[set(df.index) for df in data.values()])
         if len(raw_dates) < 2:
@@ -723,6 +725,11 @@ class BacktestEngine:
                 if price <= 0:
                     price = bar[code]["close"]
                 current_qty = broker.positions.get(code, 0)
+                # Built-in buy_hold means one successful entry and no later
+                # target-weight rebalancing. If the first entry is blocked, a
+                # zero position still retries on the next tradable bar.
+                if builtin_buy_hold and current_qty > 0:
+                    continue
                 target_value = total_equity * sig_w
                 target_qty = (
                     int(target_value / price / self.cfg.lot_size) * self.cfg.lot_size

@@ -193,8 +193,8 @@ class WebBridge:
     def set_idle(self) -> None:
         self._emit({"type": "busy", "text": "就绪", "busy": False})
 
-    def mount_agent_team(self, payload: dict[str, Any]) -> None:
-        self._emit({"type": "agent_team", **payload})
+    def mount_collaboration(self, payload: dict[str, Any]) -> None:
+        self._emit({"type": "collaboration", **payload})
 
     def mount_help(self, commands: dict[str, str]) -> None:
         items = [{"cmd": k, "desc": v} for k, v in commands.items()]

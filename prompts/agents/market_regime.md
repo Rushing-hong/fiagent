@@ -8,6 +8,7 @@
 
 ## 约束
 - 必须引用 Data Guardian 证据；标注 `quality` / `pit_safe`
+- 工具结果包含 `_evidence.evidence_id` 时必须原样写入 `evidence_ids`；不得自行编造证据 ID
 - 不替代 Company Research 做财报/DCF
 - 不替代 Quant Research 做回测
 

@@ -15,7 +15,11 @@ from core.loop import collect_agent_turn
 from hooks.registry import HookRegistry
 from research.evidence_store import EvidenceStore
 from research.run_context import ResearchRunContext, set_run_context
-from research.validators import validate_agent_output
+from research.validators import (
+    validate_agent_output,
+    validate_evidence_references,
+    validate_quant_tool_evidence,
+)
 from ui import ui
 
 _STRUCTURED_SUFFIX = (
@@ -59,6 +63,37 @@ class AgentRunner:
         self.hooks = hooks
         self.store = store
 
+    def _validate_output(
+        self,
+        agent_name: str,
+        content: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        validation = validate_agent_output(agent_name, content)
+        if self.store is None or not run_id:
+            return validation
+
+        runtime_errors: list[str] = []
+        if agent_name == "quant_research":
+            runtime_errors.extend(validate_quant_tool_evidence(
+                validation.get("structured"),
+                self.store.list_tool_calls(run_id, agent_name),
+            ))
+        if agent_name in {
+            "data_guardian",
+            "market_regime",
+            "company_research",
+            "quant_research",
+        }:
+            runtime_errors.extend(validate_evidence_references(
+                validation.get("structured"),
+                self.store.list_evidence(run_id),
+            ))
+        if runtime_errors:
+            validation["valid"] = False
+            validation["errors"] = list(validation.get("errors") or []) + runtime_errors
+        return validation
+
     def run(
         self,
         profile: AgentProfile,
@@ -85,17 +120,8 @@ class AgentRunner:
             parts.append(_STRUCTURED_SUFFIX)
 
         user_body = "\n\n".join(parts)
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": "\n\n".join([
-                    profile.system_prompt,
-                    ctx.build_time_context(),
-                    ctx.build_capabilities_index(),
-                ]),
-            },
-            {"role": "user", "content": user_body},
-        ]
+        messages: list[dict[str, Any]] = ctx.fresh_messages()
+        messages.append({"role": "user", "content": user_body})
 
         model_override = None
         if profile.name == "red_team":
@@ -122,7 +148,7 @@ class AgentRunner:
                 quiet=True,
                 model_override=model_override,
             )
-            validation = validate_agent_output(profile.name, content)
+            validation = self._validate_output(profile.name, content, run_id)
             errors = list(validation.get("errors") or [])
 
             if task.require_structured and not validation.get("valid"):
@@ -141,17 +167,26 @@ class AgentRunner:
                     quiet=True,
                     model_override=model_override,
                 )
-                validation = validate_agent_output(profile.name, content)
+                validation = self._validate_output(profile.name, content, run_id)
                 errors = list(validation.get("errors") or [])
+
+            valid = not task.require_structured or bool(validation.get("valid"))
+            error = None
+            structured = validation.get("structured")
+            if not valid:
+                error = "结构化校验未通过: " + "; ".join(errors)
+                # Invalid cards must never enter claims or downstream synthesis.
+                structured = None
 
             return AgentResult(
                 agent_name=profile.name,
                 content=content,
                 messages=messages,
                 tool_rounds=rounds,
-                success=True,
-                structured=validation.get("structured"),
+                success=valid,
+                structured=structured,
                 validation_errors=errors,
+                error=error,
             )
         except Exception as exc:
             return AgentResult(

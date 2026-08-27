@@ -29,12 +29,135 @@ let currentSessionId = null;
 let sidebarSessions = [];
 let enteredDesk = false;
 let pendingMessages = [];
+let eventSource = null;
+let recoveringConnection = false;
+let draftReady = false;
+
+const DRAFT_KEY = "atrading.web.draft.v1";
 
 function apiHeaders() {
   return {
     "Content-Type": "application/json",
     "X-Atrading-CSRF": (bootstrap && bootstrap.csrf_token) || "",
   };
+}
+
+class ApiError extends Error {
+  constructor(message, { status = 0, data = null } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
+async function apiJson(url, options = {}) {
+  const { timeoutMs = 15000, ...fetchOptions } = options;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timer = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  try {
+    const res = await fetch(url, {
+      ...fetchOptions,
+      signal: controller ? controller.signal : fetchOptions.signal,
+    });
+    let data;
+    try {
+      data = await res.json();
+    } catch (_) {
+      throw new ApiError("服务返回了无法解析的数据", { status: res.status });
+    }
+    if (!res.ok) {
+      throw new ApiError(data.error || `HTTP ${res.status}`, {
+        status: res.status,
+        data,
+      });
+    }
+    return data;
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      throw new ApiError("请求超时，请稍后重试");
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function friendlyError(err, fallback = "操作失败，请稍后重试") {
+  if (err && err.status === 403) return "页面凭证已过期，请刷新后重试";
+  if (err && err.status === 404) return "网页端接口未就绪，请重启服务后刷新";
+  if (err && err.message) {
+    if (/Failed to fetch|NetworkError|Load failed/i.test(err.message)) {
+      return "无法连接本地服务，请确认 Atrading 仍在运行";
+    }
+    return err.message;
+  }
+  return fallback;
+}
+
+function notify(message, type = "info", timeout = 4200) {
+  const region = $("#toast-region");
+  if (!region || !message) return;
+  const item = document.createElement("div");
+  item.className = `toast ${type}`;
+  item.textContent = message;
+  region.appendChild(item);
+  while (region.children.length > 3) region.firstElementChild.remove();
+  if (timeout > 0) setTimeout(() => item.remove(), timeout);
+}
+
+function setConnectionState(connected, message = "") {
+  const banner = $("#connection-banner");
+  const label = $("#connection-message");
+  if (!banner || !label) return;
+  if (connected) {
+    banner.classList.add("hidden");
+    return;
+  }
+  label.textContent = message || "与本地服务的连接已中断，正在重连…";
+  banner.classList.remove("hidden");
+}
+
+function saveDraft() {
+  if (!draftReady || !input) return;
+  try {
+    const text = input.value || "";
+    if (!text.trim()) {
+      localStorage.removeItem(DRAFT_KEY);
+      return;
+    }
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ text, collaboration: pendingCollaboration, updatedAt: Date.now() })
+    );
+  } catch (_) {}
+}
+
+function clearDraft() {
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch (_) {}
+}
+
+function restoreDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (raw) {
+      const draft = JSON.parse(raw);
+      if (draft && typeof draft.text === "string" && draft.text.trim()) {
+        setPendingCollaboration(draft.collaboration || "", { focus: false });
+        input.value = draft.text;
+        charCount.textContent = String(draft.text.length);
+        autoGrowInput();
+      }
+    }
+  } catch (_) {
+    clearDraft();
+  } finally {
+    draftReady = true;
+  }
 }
 
 /** Secondary picker (TUI PickerScreen equivalent) */
@@ -50,93 +173,68 @@ const EXAMPLES = [
   "今天市场哪些板块最热",
 ];
 
-const AGENT_MODES = [
-  {
-    id: "fast",
-    label: "单 Agent",
-    prefix: "",
-    desc: "查行情、筛选、单次分析",
-    placeholder: "输入消息… / 唤起命令 · Ctrl+P 面板 · Enter 发送",
-  },
+const COLLABORATION_OPTIONS = [
   {
     id: "research",
-    label: "研究团队",
-    prefix: "/research ",
-    desc: "深度研究、行业与个股分析",
-    placeholder: "【研究团队】输入研究问题，如：深度分析宁德时代…",
+    label: "自动组队研究",
+    desc: "按问题选择数据、公司、市场或量化专家并行处理",
+    icon: "◎",
+    flow: "取证 → 专家并行 → 反方审视 → 综合",
   },
   {
     id: "committee",
-    label: "投资委员会",
-    prefix: "/committee ",
-    desc: "买入决策、仓位与组合评估",
-    placeholder: "【投资委员会】输入决策问题，如：茅台是否值得买入…",
-  },
-  {
-    id: "review",
-    label: "交易复盘",
-    prefix: "/review ",
-    desc: "交割单、交易日记归因",
-    placeholder: "【交易复盘】输入路径或描述，如：/review uploads/trades.csv",
+    label: "投资决策会",
+    desc: "在研究结果上增加合规、风险、仓位和执行检查",
+    icon: "◇",
+    flow: "研究 → 合规 → 风险 → 执行 → 决策",
   },
 ];
 
-const AGENT_QUICK_LAUNCHES = [
-  {
-    mode: "research",
-    label: "深度分析茅台",
-    query: "深度分析贵州茅台基本面与估值",
-  },
-  {
-    mode: "committee",
-    label: "买入决策",
-    query: "贵州茅台现在是否值得买入？请给出仓位建议区间",
-  },
-  {
-    mode: "research",
-    label: "板块拥挤度",
-    query: "AI算力板块是否过度拥挤？",
-  },
-  {
-    mode: "review",
-    label: "交易复盘",
-    query: "帮我复盘最近的交易记录，分析行为偏差",
-  },
-];
+let pendingCollaboration = "";
 
-let agentMode = "fast";
-
-function getAgentModeConfig(id) {
-  return AGENT_MODES.find((m) => m.id === id) || AGENT_MODES[0];
+function getCollaborationConfig(id) {
+  return COLLABORATION_OPTIONS.find((item) => item.id === id) || null;
 }
 
-function setAgentMode(mode, { focus = true } = {}) {
-  const cfg = getAgentModeConfig(mode);
-  agentMode = cfg.id;
-  document.querySelectorAll("[data-agent-mode]").forEach((el) => {
-    el.classList.toggle("active", el.dataset.agentMode === agentMode);
-  });
-  if (input) {
-    input.placeholder = cfg.placeholder;
-    if (focus) input.focus();
-  }
-  const hint = $("#agent-mode-hint");
-  if (hint) hint.textContent = cfg.desc;
+function setPendingCollaboration(id, { focus = true } = {}) {
+  const cfg = getCollaborationConfig(id);
+  pendingCollaboration = cfg ? cfg.id : "";
+  const selection = $("#collaboration-selection");
+  const label = $("#collaboration-selection-label");
+  if (selection) selection.classList.toggle("hidden", !cfg);
+  if (label) label.textContent = cfg ? cfg.label : "";
+  closeCollaborationMenu();
+  if (focus && input) input.focus();
+  if (draftReady) saveDraft();
 }
 
-function buildSendText(raw) {
-  const text = (raw || "").trim();
-  if (!text || text.startsWith("/")) return text;
-  const cfg = getAgentModeConfig(agentMode);
-  if (!cfg.prefix) return text;
-  return cfg.prefix + text;
+function renderCollaborationMenu() {
+  const menu = $("#collaboration-menu");
+  if (!menu) return;
+  menu.innerHTML = COLLABORATION_OPTIONS.map((item) => `
+    <button type="button" class="collaboration-option" data-collaboration="${escapeHtml(item.id)}" role="menuitem">
+      <span class="collaboration-option-icon" aria-hidden="true">${escapeHtml(item.icon)}</span>
+      <span class="collaboration-option-copy">
+        <strong>${escapeHtml(item.label)}</strong>
+        <small>${escapeHtml(item.desc)}</small>
+        <em>${escapeHtml(item.flow)}</em>
+      </span>
+    </button>`).join("");
 }
 
-function launchAgentQuery(mode, query) {
-  setAgentMode(mode, { focus: false });
-  showDesk();
-  document.body.classList.add("rail-panel-open");
-  send(buildSendText(query));
+function openCollaborationMenu() {
+  const menu = $("#collaboration-menu");
+  const trigger = $("#collaboration-trigger");
+  if (!menu || !trigger) return;
+  menu.classList.remove("hidden");
+  trigger.setAttribute("aria-expanded", "true");
+}
+
+function closeCollaborationMenu() {
+  const menu = $("#collaboration-menu");
+  const trigger = $("#collaboration-trigger");
+  if (menu) menu.classList.add("hidden");
+  if (trigger) trigger.setAttribute("aria-expanded", "false");
 }
 
 function escapeHtml(s) {
@@ -156,6 +254,37 @@ function renderMd(text) {
   return `<p>${escapeHtml(text || "").replace(/\n/g, "<br>")}</p>`;
 }
 
+/** Markdown 挂载后处理：代码块加语言标签 + 复制按钮 */
+function decorateMd(container) {
+  if (!container) return;
+  container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(".code-copy")) return;
+    const code = pre.querySelector("code");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "code-copy";
+    btn.textContent = "复制";
+    btn.addEventListener("click", async () => {
+      const text = code ? code.innerText : pre.innerText;
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = "已复制";
+      } catch (_) {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(code || pre);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        btn.textContent = "已选中";
+      }
+      setTimeout(() => {
+        btn.textContent = "复制";
+      }, 1200);
+    });
+    pre.appendChild(btn);
+  });
+}
+
 function el(tag, cls, html) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -167,10 +296,48 @@ function scrollChat() {
   chat.scrollTop = chat.scrollHeight;
 }
 
+function clearChatEmpty() {
+  const empty = $("#chat-empty");
+  if (empty) empty.remove();
+}
+
+function renderChatEmpty() {
+  if (!chat || chat.children.length) return;
+  const box = el("section", "chat-empty");
+  box.id = "chat-empty";
+  box.innerHTML = `
+    <h2>今天想研究什么？</h2>
+    <p>可以直接提问，也可以从常用工作流开始。</p>
+    <div class="chat-empty-actions">
+      <button type="button" class="chat-empty-action" data-empty-action="market">
+        今日市场概览<span>指数、板块热度与资金线索</span>
+      </button>
+      <button type="button" class="chat-empty-action" data-empty-action="limit">
+        涨停板复盘<span>涨停、炸板与连板明细</span>
+      </button>
+      <button type="button" class="chat-empty-action" data-empty-action="fund">
+        基本面选股<span>按 PE、ROE、市值等条件筛选</span>
+      </button>
+      <button type="button" class="chat-empty-action" data-empty-action="backtest">
+        策略回测<span>双均线、RSI、动量与持有策略</span>
+      </button>
+    </div>`;
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-empty-action]");
+    if (!button) return;
+    const action = button.dataset.emptyAction;
+    if (action === "market") send("请总结今天 A 股市场表现、热点板块与主要风险");
+    else if (action) openFeature(action);
+  });
+  chat.appendChild(box);
+}
+
 function setBusy(on, text) {
   busy = !!on;
   sendBtn.disabled = busy;
   abortBtn.disabled = !busy;
+  chat.setAttribute("aria-busy", busy ? "true" : "false");
+  input.setAttribute("aria-busy", busy ? "true" : "false");
   const railAbort = $("#rail-abort");
   if (railAbort) railAbort.disabled = !busy;
   if (text) statusText.textContent = text;
@@ -198,6 +365,7 @@ function updateCtx(usage) {
 }
 
 function addUser(text) {
+  clearChatEmpty();
   const box = el("div", "msg user");
   box.appendChild(el("span", "role", "你"));
   const body = el("div", "body");
@@ -209,11 +377,15 @@ function addUser(text) {
 }
 
 function addAssistant(text, { streaming = false } = {}) {
+  clearChatEmpty();
   const box = el("div", `msg assistant${streaming ? " streaming" : ""}`);
   box.appendChild(el("span", "role", (bootstrap && bootstrap.app) || "Atrading"));
   const body = el("div", "body");
   if (streaming) body.textContent = text || "";
-  else body.innerHTML = renderMd(text || "");
+  else {
+    body.innerHTML = renderMd(text || "");
+    decorateMd(body);
+  }
   box.appendChild(body);
   chat.appendChild(box);
   scrollChat();
@@ -222,6 +394,7 @@ function addAssistant(text, { streaming = false } = {}) {
 
 /** 对话流内的过程消息（思考 / 工具 / 运行状态）——与用户/助手气泡同一列 */
 function addTrace({ kind, role, meta, body }) {
+  clearChatEmpty();
   const box = el("div", `msg trace ${kind || ""}`);
   const head = el("div", "trace-head");
   const roleEl = el("span", "role", role || "");
@@ -238,6 +411,7 @@ function addTrace({ kind, role, meta, body }) {
 }
 
 function addFold({ kind, icon, title, meta, body, open = false }) {
+  clearChatEmpty();
   const wrap = el("div", `fold ${kind}${open ? " open" : ""}`);
   const head = document.createElement("button");
   head.type = "button";
@@ -296,6 +470,7 @@ function clearActivity() {
 }
 
 function addLine(text) {
+  clearChatEmpty();
   const box = el("div", "msg line");
   box.textContent = text || "";
   chat.appendChild(box);
@@ -303,6 +478,7 @@ function addLine(text) {
 }
 
 function addError(text) {
+  clearChatEmpty();
   const box = el("div", "msg err");
   box.textContent = text || "error";
   chat.appendChild(box);
@@ -321,6 +497,7 @@ function addPanel(title, bodyText) {
 }
 
 function addSessions(items) {
+  clearChatEmpty();
   const wrap = el("div", "panel-box");
   wrap.appendChild(el("div", "panel-title", "Sessions · 点击恢复"));
   const list = el("div", "session-list");
@@ -342,6 +519,7 @@ function addSessions(items) {
 }
 
 function addHelp(items) {
+  clearChatEmpty();
   const wrap = el("div", "panel-box");
   wrap.appendChild(el("div", "panel-title", "命令帮助 · 点击填入"));
   const list = el("div", "help-list");
@@ -365,6 +543,12 @@ function addHelp(items) {
 function applyPrefs(ev) {
   if (ev.model_label || ev.model) modelLabel.textContent = ev.model_label || ev.model;
   if (ev.effort_label || ev.effort) effortLabel.textContent = ev.effort_label || ev.effort;
+  if (bootstrap) {
+    if (ev.model) bootstrap.model = ev.model;
+    if (ev.model_label) bootstrap.model_label = ev.model_label;
+    if (ev.model_status) bootstrap.model_status = ev.model_status;
+    renderModelStatus(bootstrap);
+  }
   if (ev.session_id) {
     currentSessionId = ev.session_id;
     metaEl.textContent = `Session ${ev.session_id}`;
@@ -457,29 +641,31 @@ function openPicker(ev) {
 }
 
 async function pickerApi(body) {
-  const res = await fetch("/api/picker", {
-    method: "POST",
-    headers: apiHeaders(),
-    body: JSON.stringify(body),
-  });
-  let data;
   try {
-    data = await res.json();
-  } catch {
-    data = { ok: false, error: `HTTP ${res.status}` };
+    const data = await apiJson("/api/picker", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify(body),
+      timeoutMs: 20000,
+    });
+    if (data && data.picker) {
+      closeFeature();
+      closeAbout();
+      closePalette();
+      openPicker(data.picker);
+    } else if (data && data.closed) {
+      closePicker();
+    } else if (data && data.ok === false && data.error) {
+      statusText.textContent = data.error;
+      notify(data.error, "error");
+    }
+    return data;
+  } catch (err) {
+    const message = friendlyError(err, "无法打开选择器");
+    statusText.textContent = message;
+    notify(message, "error");
+    return { ok: false, error: message };
   }
-  if (data && data.picker) {
-    closeFeature();
-    closeAbout();
-    closePalette();
-    openPicker(data.picker);
-  } else if (data && data.closed) {
-    closePicker();
-  } else if (data && data.ok === false && data.error) {
-    const st = $("#status-text");
-    if (st) st.textContent = data.error;
-  }
-  return data;
 }
 
 async function cancelPicker() {
@@ -534,11 +720,11 @@ function handleEvent(ev) {
   if (t === "hello") return;
   if (t === "turn_reset") {
     resetRailTurn();
-    if (window.AgentTeamUI) AgentTeamUI.reset();
+    if (window.CollaborationUI) CollaborationUI.onTurnReset();
     return;
   }
-  if (t === "agent_team") {
-    if (window.AgentTeamUI) AgentTeamUI.handle(ev);
+  if (t === "collaboration") {
+    if (window.CollaborationUI) CollaborationUI.handle(ev);
     return;
   }
 
@@ -556,6 +742,7 @@ function handleEvent(ev) {
     }
     if (enteredDesk) {
       if (ev.clear || Array.isArray(ev.messages)) {
+        if (ev.clear && window.CollaborationUI) CollaborationUI.close();
         hydrateMessages(ev.messages || []);
       }
     }
@@ -613,20 +800,7 @@ function handleEvent(ev) {
   if (t === "line") {
     const text = ev.text || "";
     const cls = ev.classes || "";
-    if (document.body.classList.contains("team-run-active")) {
-      if (window.AgentTeamUI && AgentTeamUI.routeLine && AgentTeamUI.routeLine(text)) return;
-      if (
-        cls.includes("line-err") ||
-        cls.includes("line-hook") ||
-        (cls.includes("line-warn") && /LLM|流式|chunked/i.test(text))
-      ) {
-        if (window.AgentTeamUI && AgentTeamUI.routeExternalError && AgentTeamUI.routeExternalError(text, cls)) {
-          return;
-        }
-        return;
-      }
-    }
-    if (window.AgentTeamUI && AgentTeamUI.routeLine && AgentTeamUI.routeLine(text)) return;
+    if (window.CollaborationUI && CollaborationUI.routeLine(text, cls)) return;
     if (text.includes("\n") || text.length > 120) addPanel("信息", text);
     else addLine(text);
     return;
@@ -710,6 +884,7 @@ function handleEvent(ev) {
     else {
       liveReply.box.classList.remove("streaming");
       liveReply.body.innerHTML = renderMd(text);
+      decorateMd(liveReply.body);
     }
     liveReply = null;
     return;
@@ -854,12 +1029,18 @@ function buildTape(items, nowLabel) {
 }
 
 async function refreshTicker() {
+  const nowLabel = new Date().toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
   try {
-    const res = await fetch("/api/ticker");
-    const data = await res.json();
-    buildTape(data.items || [], bootstrap && bootstrap.now);
+    const data = await apiJson("/api/ticker", { timeoutMs: 8000 });
+    buildTape(data.items || [], nowLabel);
   } catch (_) {
-    buildTape([], bootstrap && bootstrap.now);
+    buildTape([], nowLabel);
   }
 }
 
@@ -985,19 +1166,15 @@ async function refreshRailLimit() {
     const date =
       (bootstrap && bootstrap.latest_trade_date) ||
       (typeof defaultEndDate === "function" ? defaultEndDate() : "");
-    const res = await fetch("/api/tool", {
+    const data = await apiJson("/api/tool", {
       method: "POST",
       headers: apiHeaders(),
       body: JSON.stringify({
         name: "get_limit_board",
         args: { date: date || "" },
       }),
+      timeoutMs: 0,
     });
-    const data = await res.json();
-    if (res.status === 404) {
-      box.innerHTML = `<div class="rail-empty">接口未就绪，请重启服务</div>`;
-      return;
-    }
     if (!data.ok || (data.result && data.result.ok === false)) {
       const err =
         (data.result && data.result.error) || data.error || "加载失败";
@@ -1007,7 +1184,7 @@ async function refreshRailLimit() {
     applySharedLimitBoard(data.result || {});
     renderRailLimitFromShared();
   } catch (err) {
-    box.innerHTML = `<div class="rail-empty">${escapeHtml(String(err))}</div>`;
+    box.innerHTML = `<div class="rail-empty">${escapeHtml(friendlyError(err, "加载失败"))}</div>`;
   } finally {
     railLimitBusy = false;
     if (btn) {
@@ -1132,14 +1309,6 @@ function wireRail() {
   const limRef = $("#rail-limit-refresh");
   if (limRef) limRef.addEventListener("click", () => refreshRailLimit());
 
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (!document.body.classList.contains("agent-panel-open")) return;
-    if (window.AgentTeamUI && AgentTeamUI.closeAgent) {
-      e.preventDefault();
-      AgentTeamUI.closeAgent();
-    }
-  });
 }
 
 function closeAbout() {
@@ -1235,6 +1404,7 @@ function showDesk() {
   enteredDesk = true;
   welcome.classList.add("hidden");
   app.classList.remove("hidden");
+  renderChatEmpty();
   input.focus();
   if (!$("#rail-limit") || !$("#rail-limit").dataset.loaded) {
     refreshRailLimit().then(() => {
@@ -1304,12 +1474,13 @@ async function refreshSessions(query) {
     const url = q.trim()
       ? `/api/sessions?q=${encodeURIComponent(q.trim())}`
       : "/api/sessions";
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await apiJson(url, { timeoutMs: 12000 });
     if (data && data.ok !== false) {
       renderSessionList(data.items || [], data.current_id);
     }
-  } catch (_) {}
+  } catch (err) {
+    notify(friendlyError(err, "会话列表刷新失败"), "error");
+  }
 }
 
 function wireSessionSearch() {
@@ -1382,6 +1553,9 @@ async function runAction(action) {
     case "ui":
       await send("/ui");
       break;
+    case "cache":
+      await send("/cache");
+      break;
     default:
       break;
   }
@@ -1400,6 +1574,7 @@ const PALETTE_ITEMS = [
   { id: "thinking", label: "切换思考展开", hint: "思考过程展开/折叠", key: "/thinking" },
   { id: "verbose", label: "切换长内容展开", hint: "长内容默认展开/折叠", key: "/verbose" },
   { id: "reload", label: "重新扫描能力", hint: "skills / tools / mcp", key: "/reload" },
+  { id: "cache", label: "查看缓存统计", hint: "提示词缓存命中与 token 节省", key: "/cache" },
   { id: "reload_comp", label: "全面重启", hint: "退出进程并重新进入", key: "/reload_comp" },
   { id: "ui", label: "当前界面模式", hint: "查看 tui / plain / web", key: "/ui" },
 ];
@@ -1475,17 +1650,54 @@ function confirmPalette(index) {
 
 function hydrateMessages(messages) {
   chat.innerHTML = "";
+  let legacyCollaboration = null;
   for (const m of messages || []) {
     if (m.role === "user") {
-      if (window.AgentTeamUI && AgentTeamUI.parseBrief && AgentTeamUI.parseBrief(m.content)) {
+      const legacy =
+        window.CollaborationUI && CollaborationUI.parseLegacyBrief
+          ? CollaborationUI.parseLegacyBrief(m.content)
+          : null;
+      if (legacy) {
+        legacyCollaboration = legacy;
         continue;
       }
       addUser(m.content);
-    } else if (m.role === "assistant") addAssistant(m.content);
+    } else if (m.role === "assistant") {
+      const task = m.collaboration || legacyCollaboration;
+      if (task && window.CollaborationUI) {
+        CollaborationUI.mountHistoryCard(task);
+      }
+      addAssistant(m.content);
+      legacyCollaboration = null;
+    }
+  }
+  if (!chat.children.length) renderChatEmpty();
+}
+
+function renderModelStatus(data) {
+  const root = $("#welcome-health");
+  const main = $("#welcome-health-main");
+  const detail = $("#welcome-health-detail");
+  const modelButton = $("#btn-model");
+  if (!root || !main || !detail) return;
+  const status = data.model_status || {};
+  const ready = status.ready === true;
+  root.classList.remove("checking", "ready", "warning");
+  root.classList.add(ready ? "ready" : "warning");
+  const label = data.model_label || data.model || "当前模型";
+  main.textContent = ready ? `${label} 已就绪` : `${label} 尚未就绪`;
+  const counts = `${Number(data.tool_count || 0)} 工具 · ${Number(data.skill_count || 0)} Skills`;
+  detail.textContent = [status.note, counts].filter(Boolean).join(" · ");
+  if (modelButton) {
+    modelButton.textContent = ready ? "切换模型" : "配置模型";
+    modelButton.classList.toggle("needs-attention", !ready);
+    modelButton.title = ready
+      ? "切换模型 / 查看 Key 状态"
+      : `${status.note || "当前模型未配置"}；点击选择可用模型`;
   }
 }
 
-function applyBootstrap(data) {
+function applyBootstrap(data, { initial = false, recover = false } = {}) {
   bootstrap = data;
   commands = data.commands || {};
   currentSessionId = data.session_id || null;
@@ -1499,10 +1711,28 @@ function applyBootstrap(data) {
     : "Session · draft";
   modelLabel.textContent = data.model_label || data.model || "—";
   effortLabel.textContent = data.effort_label || data.effort || "—";
+  renderModelStatus(data);
   renderSessionList(data.sessions || [], data.session_id);
   pendingMessages = data.messages || [];
-  // 始终先停在欢迎页，由用户点「开始 / 继续 / 工作台」再进入
-  showWelcome();
+  welcome.querySelectorAll("button").forEach((button) => {
+    button.disabled = false;
+  });
+  const continueButton = $("#btn-continue");
+  if (continueButton) {
+    const hasHistory =
+      !!data.has_history ||
+      (data.sessions || []).some((session) => Number(session.messages || 0) > 0);
+    continueButton.disabled = !hasHistory;
+    continueButton.title = hasHistory ? "恢复最近一次对话" : "暂无可继续的对话";
+  }
+  if (initial) {
+    // 首次打开先停在欢迎页，由用户选择入口。
+    showWelcome();
+  } else if (recover && enteredDesk) {
+    // SSE 断线期间可能丢过 user/reply 事件；用服务端持久消息恢复已确认状态。
+    hydrateMessages(pendingMessages);
+    showDesk();
+  }
   setBusy(!!data.busy);
 }
 
@@ -1547,36 +1777,85 @@ function renderSlash() {
 }
 
 async function send(text) {
-  const raw = (text != null ? text : input.value).trim();
-  const value = buildSendText(raw);
+  const fromComposer = text == null;
+  const raw = (fromComposer ? input.value : text).trim();
+  const value = raw;
+  const collaboration =
+    fromComposer && !value.startsWith("/") ? pendingCollaboration : "";
   if (!value || busy) return;
   showDesk();
-  input.value = "";
-  charCount.textContent = "";
   slashMenu.classList.add("hidden");
   setBusy(true, "发送中…");
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: apiHeaders(),
-    body: JSON.stringify({ text: value }),
-  });
-  const data = await res.json();
-  if (!data.ok) {
-    setBusy(false, data.error || "失败");
-    if (data.error === "busy") addLine("上一轮仍在进行");
+  try {
+    const data = await apiJson("/api/chat", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify({ text: value, collaboration }),
+      timeoutMs: 15000,
+    });
+    if (!data.ok) {
+      const message = data.error === "busy" ? "上一轮仍在进行" : data.error || "发送失败";
+      setBusy(false, message);
+      notify(message, "error");
+      return;
+    }
+    if (fromComposer && input.value.trim() === raw) {
+      input.value = "";
+      input.style.height = "auto";
+      charCount.textContent = "";
+      clearDraft();
+    } else if (fromComposer) {
+      saveDraft();
+    }
+    if (fromComposer && collaboration) {
+      setPendingCollaboration("", { focus: false });
+    }
+  } catch (err) {
+    const message = friendlyError(err, "消息发送失败");
+    setBusy(false, "发送失败");
+    setConnectionState(false, message);
+    const retained = fromComposer && input.value.trim() === raw;
+    notify(`${message}${retained ? "；输入内容仍保留" : ""}`, "error", 6000);
+    if (fromComposer) saveDraft();
+    input.focus();
   }
 }
 
 async function abort() {
-  await fetch("/api/abort", {
-    method: "POST",
-    headers: apiHeaders(),
-    body: "{}",
-  });
+  try {
+    await apiJson("/api/abort", {
+      method: "POST",
+      headers: apiHeaders(),
+      body: "{}",
+      timeoutMs: 10000,
+    });
+  } catch (err) {
+    notify(friendlyError(err, "中止请求失败"), "error");
+  }
 }
 
-function connectEvents() {
+async function recoverFromDisconnect() {
+  if (recoveringConnection) return;
+  recoveringConnection = true;
+  try {
+    const data = await apiJson("/api/bootstrap", { timeoutMs: 15000 });
+    applyBootstrap(data, { recover: true });
+    setConnectionState(true);
+    notify("连接已恢复，状态已同步", "success");
+    refreshTicker();
+    refreshSessions();
+  } catch (err) {
+    setConnectionState(false, friendlyError(err));
+  } finally {
+    recoveringConnection = false;
+  }
+}
+
+function connectEvents({ recover = false } = {}) {
+  if (eventSource) eventSource.close();
   const es = new EventSource("/api/events");
+  eventSource = es;
+  let shouldRecover = recover;
   es.onmessage = (e) => {
     try {
       handleEvent(JSON.parse(e.data));
@@ -1584,9 +1863,41 @@ function connectEvents() {
       console.error("sse event failed", err, e.data);
     }
   };
-  es.onerror = () => {
-    statusText.textContent = "重连中…";
+  es.onopen = () => {
+    if (shouldRecover) {
+      shouldRecover = false;
+      statusText.textContent = "正在同步状态…";
+      recoverFromDisconnect();
+    } else {
+      setConnectionState(true);
+    }
   };
+  es.onerror = () => {
+    shouldRecover = true;
+    statusText.textContent = "重连中…";
+    setConnectionState(false);
+  };
+}
+
+function wireReliability() {
+  const retry = $("#connection-retry");
+  if (retry) {
+    retry.addEventListener("click", () => {
+      if (!bootstrap) {
+        window.location.reload();
+        return;
+      }
+      retry.disabled = true;
+      connectEvents({ recover: true });
+      setTimeout(() => {
+        retry.disabled = false;
+      }, 1200);
+    });
+  }
+  window.addEventListener("offline", () => {
+    setConnectionState(false, "浏览器已离线；恢复网络后会自动同步");
+  });
+  window.addEventListener("online", () => connectEvents({ recover: true }));
 }
 
 function wireWelcome() {
@@ -1596,39 +1907,10 @@ function wireWelcome() {
     b.type = "button";
     b.textContent = `“${q}”`;
     b.addEventListener("click", () => {
-      setAgentMode("fast", { focus: false });
       send(q);
     });
     box.appendChild(b);
   });
-
-  const welcomeLaunch = $("#agent-launch-welcome");
-  if (welcomeLaunch) {
-    welcomeLaunch.innerHTML = `<div class="agent-launch-title">点击启动 Agent 团队</div><div class="agent-launch-grid"></div>`;
-    const grid = welcomeLaunch.querySelector(".agent-launch-grid");
-    AGENT_MODES.forEach((m) => {
-      if (m.id === "fast") return;
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "agent-launch-card";
-      card.dataset.agentMode = m.id;
-      card.innerHTML = `<div class="alc-title">${escapeHtml(m.label)}</div><div class="alc-desc">${escapeHtml(m.desc)}</div>`;
-      card.addEventListener("click", () => {
-        showDesk();
-        setAgentMode(m.id);
-        document.body.classList.add("rail-panel-open");
-      });
-      grid.appendChild(card);
-    });
-    AGENT_QUICK_LAUNCHES.forEach((item) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "agent-launch-quick";
-      b.textContent = item.label;
-      b.addEventListener("click", () => launchAgentQuery(item.mode, item.query));
-      grid.appendChild(b);
-    });
-  }
   $("#btn-new").addEventListener("click", async () => {
     showDesk();
     await send("/new");
@@ -1670,30 +1952,30 @@ function wireWelcome() {
   }
 }
 
-function wireAgentLauncher() {
-  document.querySelectorAll("[data-agent-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const mode = btn.dataset.agentMode;
-      if (!mode) return;
-      showDesk();
-      setAgentMode(mode);
-      if (mode !== "fast") document.body.classList.add("rail-panel-open");
-    });
-  });
-
-  const quick = $("#sb-agent-quick");
-  if (quick) {
-    quick.innerHTML = "";
-    AGENT_QUICK_LAUNCHES.forEach((item) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "sb-agent-quick-btn";
-      b.textContent = item.label;
-      b.title = item.query;
-      b.addEventListener("click", () => launchAgentQuery(item.mode, item.query));
-      quick.appendChild(b);
+function wireCollaborationSelector() {
+  renderCollaborationMenu();
+  const trigger = $("#collaboration-trigger");
+  const menu = $("#collaboration-menu");
+  if (trigger) {
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (menu && menu.classList.contains("hidden")) openCollaborationMenu();
+      else closeCollaborationMenu();
     });
   }
+  if (menu) {
+    menu.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-collaboration]");
+      if (!option) return;
+      setPendingCollaboration(option.dataset.collaboration || "");
+    });
+  }
+  const clear = $("#collaboration-clear");
+  if (clear) clear.addEventListener("click", () => setPendingCollaboration(""));
+  document.addEventListener("click", (event) => {
+    const toolbar = $("#collaboration-toolbar");
+    if (toolbar && !toolbar.contains(event.target)) closeCollaborationMenu();
+  });
 }
 
 function wireSidebar() {
@@ -1961,14 +2243,14 @@ function openFeature(kind, opts) {
       </details>
       <button type="button" class="run" id="f-run">运行</button>
     `;
-  } else if (kind === "team") {
-    if (window.AgentTeamUI) {
-      window.AgentTeamUI.openTeam();
+  } else if (kind === "collaboration") {
+    if (window.CollaborationUI) {
+      window.CollaborationUI.openHistory();
     }
     return;
   } else if (kind === "evals") {
-    if (window.AgentTeamUI) {
-      window.AgentTeamUI.openEvals();
+    if (window.CollaborationUI) {
+      window.CollaborationUI.openEvals();
     }
     return;
   } else {
@@ -2104,23 +2386,12 @@ async function runFeature() {
       }
     }
 
-    const res = await fetch("/api/tool", {
+    const data = await apiJson("/api/tool", {
       method: "POST",
       headers: apiHeaders(),
       body: JSON.stringify({ name, args }),
+      timeoutMs: 0,
     });
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      data = { ok: false, error: `HTTP ${res.status}` };
-    }
-    if (res.status === 404) {
-      const tip = "接口未就绪：请重启 atrading --web 后再试（Ctrl+F5）";
-      meta.textContent = tip;
-      result.innerHTML = `<div class="empty">${escapeHtml(tip)}</div>`;
-      return;
-    }
     if (!data.ok) {
       meta.textContent = data.error || "失败";
       result.innerHTML = `<div class="empty">${escapeHtml(data.error || "失败")}</div>`;
@@ -2187,8 +2458,10 @@ async function runFeature() {
       }
     }
   } catch (err) {
-    meta.textContent = String(err);
-    result.innerHTML = `<div class="empty">${escapeHtml(String(err))}</div>`;
+    const message = friendlyError(err);
+    meta.textContent = message;
+    result.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    notify(message, "error");
   } finally {
     btn.disabled = false;
   }
@@ -2799,7 +3072,25 @@ function wirePicker() {
       }
       return;
     }
-    if (!pickerState) return;
+    if (!pickerState) {
+      // 「/」快速唤起输入框（未在输入控件、无弹窗、已进入工作台时）
+      if (
+        e.key === "/" &&
+        enteredDesk &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "") &&
+        !(e.target && e.target.isContentEditable)
+      ) {
+        e.preventDefault();
+        input.focus();
+        input.value = "/";
+        autoGrowInput();
+        renderSlash();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       cancelPicker();
@@ -2827,12 +3118,19 @@ function wirePicker() {
   });
 }
 
+function autoGrowInput() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 180) + "px";
+}
+
 function wireComposer() {
   sendBtn.addEventListener("click", () => send());
   abortBtn.addEventListener("click", abort);
   input.addEventListener("input", () => {
     const n = input.value.length;
     charCount.textContent = n ? `${n}` : "";
+    autoGrowInput();
+    saveDraft();
     renderSlash();
   });
   input.addEventListener("keydown", (e) => {
@@ -2880,24 +3178,33 @@ async function main() {
   wireSidebar();
   wireSessionSearch();
   wireFeature();
-  wireAgentLauncher();
+  wireCollaborationSelector();
   wireRail();
   wireAbout();
   wirePalette();
   wirePicker();
   wireComposer();
-  wireAgentLauncher();
-  setAgentMode("fast", { focus: false });
-  if (window.AgentTeamUI) AgentTeamUI.wire();
-  const res = await fetch("/api/bootstrap");
-  const data = await res.json();
-  applyBootstrap(data);
+  wireReliability();
+  setPendingCollaboration("", { focus: false });
+  restoreDraft();
+  if (window.CollaborationUI) CollaborationUI.wire();
+  welcome.querySelectorAll("button").forEach((button) => {
+    button.disabled = true;
+  });
+  const data = await apiJson("/api/bootstrap", { timeoutMs: 15000 });
+  applyBootstrap(data, { initial: true });
   connectEvents();
   await refreshTicker();
   setInterval(refreshTicker, 12000);
 }
 
 main().catch((err) => {
-  statusText.textContent = String(err);
+  const message = friendlyError(err, "网页端初始化失败");
+  statusText.textContent = message;
+  setConnectionState(false, message);
+  notify(message, "error", 0);
+  sendBtn.disabled = true;
+  abortBtn.disabled = true;
+  input.placeholder = "本地服务未连接；请重试或刷新页面";
   showDesk();
 });

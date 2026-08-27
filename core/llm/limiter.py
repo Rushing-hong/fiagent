@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import threading
 from contextlib import contextmanager
 
-_MAX = max(1, int(os.getenv("FIAGENT_LLM_MAX_PARALLEL", "2")))
+from core.config import env_int
+
+_MAX = env_int("FIAGENT_LLM_MAX_PARALLEL", 2, minimum=1, maximum=64)
 _gate = threading.Semaphore(_MAX)
 
 

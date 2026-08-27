@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import os
+from core.config import env_int
 
-SOFT_WARN_AT = max(2, int(os.getenv("FIAGENT_TOOL_SOFT_WARN_AT", "3")))
-STRONG_WARN_AT = max(SOFT_WARN_AT + 1, int(os.getenv("FIAGENT_TOOL_STRONG_WARN_AT", "5")))
+SOFT_WARN_AT = env_int("FIAGENT_TOOL_SOFT_WARN_AT", 3, minimum=2, maximum=50)
+STRONG_WARN_AT = env_int(
+    "FIAGENT_TOOL_STRONG_WARN_AT", 5, minimum=SOFT_WARN_AT + 1, maximum=100
+)
 
 # Lighter / cheaper substitutes when a heavy tool is over-used.
 _TOOL_ALTERNATIVES: dict[str, list[str]] = {

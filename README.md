@@ -61,9 +61,11 @@ atrading --web           # localhost HTML UI → http://127.0.0.1:8787
 # python -m atrading     # same entry without relying on PATH
 ```
 
+The Web workspace includes four Agent modes (single, research team, investment committee, and trade review), direct market/limit-board/fundamental-screen/backtest panels, session search, model readiness, automatic draft recovery, and connection-state recovery. All state-changing Web requests stay on the localhost service and use a per-run CSRF token.
+
 Switch models in-session with `/model` (or the model picker). Default remains DeepSeek V4 Pro/Flash; other vendors need their own `*_API_KEY` in `.env`. Claude expects an **OpenAI-compatible** `ANTHROPIC_BASE_URL` (gateway / proxy).
 
-**In-chat commands**: `/help` `/new` `/sessions` `/resume <id>` `/model` `/effort` `/reload` `/research` `/committee` `/review` `/thinking` `/tui` `/plain` `/web` `/quit`
+**In-chat commands**: `/help` `/new` `/sessions` `/resume <id>` `/model` `/effort` `/reload` `/cache` `/research` `/committee` `/review` `/thinking` `/tui` `/plain` `/web` `/quit`
 
 **Environment variables**:
 | Variable | Description |

@@ -10,7 +10,7 @@ import pytest
 from skills.registry import SkillRegistry, _validate_skill_name
 from tools._fs import PathError, resolve_path
 from tools.run_python import RunPythonTool, _sanitized_subprocess_env
-from ui.web.server import _is_authorized_post
+from ui.web.server import _current_model_status, _is_authorized_post
 
 
 def test_skill_name_rejects_traversal():
@@ -76,6 +76,27 @@ def test_web_post_requires_run_token_and_same_origin():
         expected_origin=headers["Origin"],
         csrf_token=token,
     )
+
+
+def test_web_model_status_is_ui_safe(monkeypatch):
+    import core.llm.client as llm_client
+    import ui.web.server as web_server
+
+    monkeypatch.setattr(web_server, "get_model", lambda: "gpt-5.6-sol")
+    monkeypatch.setattr(
+        llm_client,
+        "provider_status",
+        lambda provider: {
+            "ready": True,
+            "has_key": True,
+            "note": "Key ✓",
+            "secret": "must-not-leak",
+        },
+    )
+
+    status = _current_model_status()
+
+    assert status == {"ready": True, "provider": "openai", "note": "Key ✓"}
 
 
 def test_trading_days_no_weekday_fallback(monkeypatch):

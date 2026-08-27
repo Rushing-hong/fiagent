@@ -25,6 +25,7 @@ from core.commands import (
     reexec_self,
 )
 from core.agents.dispatch import dispatch_turn
+from core.agents.router import AgentMode
 from core.turn_control import TurnAborted, turn_control
 from ui import ui
 from ui.prefs import (
@@ -49,6 +50,17 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = int(os.environ.get("FIAGENT_WEB_PORT", "8787"))
 
+_COLLABORATION_MODES = {
+    AgentMode.RESEARCH.value: AgentMode.RESEARCH,
+    AgentMode.COMMITTEE.value: AgentMode.COMMITTEE,
+    AgentMode.TRADE_REVIEW.value: AgentMode.TRADE_REVIEW,
+}
+
+
+def _collaboration_mode(value: str | None) -> AgentMode | None:
+    """Resolve a one-shot Web collaboration selection."""
+    return _COLLABORATION_MODES.get((value or "").strip().lower())
+
 
 def _is_authorized_post(headers: Any, *, expected_origin: str, csrf_token: str) -> bool:
     """Allow state-changing requests only from this UI with its per-run token."""
@@ -57,6 +69,28 @@ def _is_authorized_post(headers: Any, *, expected_origin: str, csrf_token: str) 
         return False
     supplied = headers.get("X-Atrading-CSRF", "")
     return bool(supplied) and secrets.compare_digest(str(supplied), csrf_token)
+
+
+def _current_model_status() -> dict[str, Any]:
+    """Return UI-safe readiness for the selected model without exposing secrets."""
+    from core.llm.catalog import get_model_spec
+    from core.llm.client import provider_status
+
+    model = get_model()
+    try:
+        spec = get_model_spec(model)
+        status = provider_status(spec.provider)
+    except (KeyError, ValueError) as exc:
+        return {
+            "ready": False,
+            "provider": "",
+            "note": f"模型配置异常: {exc}",
+        }
+    return {
+        "ready": bool(status.get("ready")),
+        "provider": spec.provider,
+        "note": str(status.get("note") or ""),
+    }
 
 
 class WebRuntime:
@@ -122,6 +156,7 @@ class WebRuntime:
         cur = self.current
         tools = self.ctx.tools.all()
         skills = self.ctx.skills.all()
+        model_status = _current_model_status()
         latest_trade_date = None
         try:
             from market.trade_calendar import latest_trading_day
@@ -146,6 +181,7 @@ class WebRuntime:
             "sessions": self._sessions_rows(limit=40),
             "model": get_model(),
             "model_label": model_label(),
+            "model_status": model_status,
             "effort": get_reasoning_effort(),
             "effort_label": effort_label(),
             "now": self.ctx.format_now(),
@@ -199,10 +235,15 @@ class WebRuntime:
             }
         )
 
-    def handle_chat(self, text: str) -> dict[str, Any]:
+    def handle_chat(self, text: str, collaboration: str = "") -> dict[str, Any]:
         text = (text or "").strip()
         if not text:
             return {"ok": False, "error": "empty"}
+        mode = _collaboration_mode(collaboration)
+        if collaboration and mode is None:
+            return {"ok": False, "error": "invalid collaboration"}
+        if mode is not None and text.startswith("/"):
+            return {"ok": False, "error": "commands cannot use collaboration"}
         with self._lock:
             if self._busy:
                 return {"ok": False, "error": "busy"}
@@ -210,7 +251,7 @@ class WebRuntime:
 
         def worker() -> None:
             try:
-                self._run_one(text)
+                self._run_one(text, collaboration=mode)
             finally:
                 with self._lock:
                     self._busy = False
@@ -256,6 +297,7 @@ class WebRuntime:
                 "type": "prefs",
                 "model": get_model(),
                 "model_label": model_label(),
+                "model_status": _current_model_status(),
                 "effort": get_reasoning_effort(),
                 "effort_label": effort_label(),
                 "session_id": cur.id if cur else None,
@@ -720,7 +762,12 @@ class WebRuntime:
             ui.error(str(exc))
             return {"ok": False, "error": str(exc)}
 
-    def _run_one(self, text: str) -> None:
+    def _run_one(
+        self,
+        text: str,
+        *,
+        collaboration: AgentMode | None = None,
+    ) -> None:
         self.bridge.set_busy("处理中…")
 
         if text.startswith("/"):
@@ -737,11 +784,11 @@ class WebRuntime:
                 text = COMMAND_ALIASES[raw_name] + ((" " + rest) if rest else "")
 
             low = text.strip().lower()
-            is_agent_team = (
+            is_collaboration_command = (
                 low.startswith("/research") or low.startswith("/committee")
                 or low.startswith("/review")
             )
-            if not is_agent_team:
+            if not is_collaboration_command:
                 if low in ("/sessions", "/session"):
                     ui.show_user_message(text)
                     self._open_session_picker()
@@ -817,7 +864,14 @@ class WebRuntime:
         ui.show_user_message(text)
         self.messages.append({"role": "user", "content": text})
         try:
-            dispatch_turn(self.client, self.messages, self.ctx, self.hooks, text)
+            dispatch_turn(
+                self.client,
+                self.messages,
+                self.ctx,
+                self.hooks,
+                text,
+                mode_override=collaboration,
+            )
             if self.current is None:
                 self.current = self.store.create()
                 self.store.auto_title(self.current.id, text)
@@ -860,7 +914,13 @@ def _public_messages(messages: list) -> list[dict[str, Any]]:
         content = m.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
-        out.append({"role": role, "content": content})
+        item: dict[str, Any] = {"role": role, "content": content}
+        private_meta = m.get("_fiagent")
+        if isinstance(private_meta, dict):
+            collaboration = private_meta.get("collaboration")
+            if isinstance(collaboration, dict) and collaboration.get("run_id"):
+                item["collaboration"] = collaboration
+        out.append(item)
     return out[-80:]
 
 
@@ -896,8 +956,8 @@ def run_web(
     )
     turn_control.set_tui_mode(True)
     ui.bind_tui(rt.bridge)
-    from ui.web.agent_progress import set_progress_emitter
-    set_progress_emitter(rt.bridge.mount_agent_team)
+    from ui.web.collaboration_progress import set_progress_emitter
+    set_progress_emitter(rt.bridge.mount_collaboration)
     rt.bridge.start_ticks()
     rt.bridge.set_idle()
     ui.show_startup(
@@ -912,15 +972,23 @@ def run_web(
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        _static_cache: dict[str, tuple[float, bytes]] = {}
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return
 
-        def _send(self, code: int, body: bytes, content_type: str) -> None:
+        def _send(
+            self,
+            code: int,
+            body: bytes,
+            content_type: str,
+            *,
+            cache_control: str = "no-store",
+        ) -> None:
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache_control)
             self.end_headers()
             self.wfile.write(body)
 
@@ -983,9 +1051,38 @@ def run_web(
                     ".svg": "image/svg+xml",
                     ".html": "text/html; charset=utf-8",
                 }.get(target.suffix.lower(), "application/octet-stream")
-                self._send(200, target.read_bytes(), ctype)
+                self._send_static(target, ctype)
                 return
             self._json(404, {"ok": False, "error": "not found"})
+
+        def _read_static(self, target: Path) -> tuple[float, bytes]:
+            """Read a static file with an mtime-keyed in-memory cache."""
+            mtime = target.stat().st_mtime
+            key = str(target)
+            hit = self._static_cache.get(key)
+            if hit and hit[0] == mtime:
+                return hit
+            entry = (mtime, target.read_bytes())
+            self._static_cache[key] = entry
+            return entry
+
+        def _send_static(self, target: Path, ctype: str) -> None:
+            mtime, body = self._read_static(target)
+            last_modified = self.date_time_string(mtime)
+            ims = self.headers.get("If-Modified-Since")
+            if ims and ims == last_modified:
+                self.send_response(304)
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Last-Modified", last_modified)
+            # 静态资源带 ?v= 指纹的可让浏览器缓存更久；本地开发用 no-cache + 304 最稳
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
@@ -1004,7 +1101,10 @@ def run_web(
                 self._json(400, {"ok": False, "error": "bad json"})
                 return
             if path == "/api/chat":
-                self._json(200, rt.handle_chat(str(payload.get("text") or "")))
+                self._json(200, rt.handle_chat(
+                    str(payload.get("text") or ""),
+                    str(payload.get("collaboration") or ""),
+                ))
                 return
             if path == "/api/picker":
                 self._json(200, rt.handle_picker(payload if isinstance(payload, dict) else {}))

@@ -8,7 +8,7 @@ from typing import Any
 from openai import OpenAI
 
 from core.agents.orchestrator import ResearchOrchestrator
-from core.agents.router import AgentMode, route_query
+from core.agents.router import AgentMode
 from core.agents.trade_review import TradeReviewOrchestrator
 from core.context import AgentContext
 from core.loop import run_agent_turn
@@ -30,6 +30,14 @@ def _parse_mode_prefix(text: str) -> tuple[AgentMode | None, str]:
     if lower in ("/research", "/committee", "/review"):
         return None, ""
     return None, q
+
+
+def _resolve_turn_mode(
+    user_input: str,
+    mode_override: AgentMode | None = None,
+) -> tuple[AgentMode, str]:
+    forced, query = _parse_mode_prefix(user_input)
+    return forced or mode_override or AgentMode.FAST, query
 
 
 def _eval_enabled() -> bool:
@@ -55,14 +63,18 @@ def dispatch_turn(
     ctx: AgentContext,
     hooks: HookRegistry,
     user_input: str,
+    *,
+    mode_override: AgentMode | None = None,
 ) -> None:
     """Single entry: Fast / Research / Committee / Trade Review."""
-    forced, query = _parse_mode_prefix(user_input)
-    if forced is None and query == "":
+    mode, query = _resolve_turn_mode(user_input, mode_override)
+    if query == "":
         ui.warn("请附加问题，例如: /research 深度分析贵州茅台 或 /review uploads/trades.csv")
         return
 
-    mode = forced or route_query(query)
+    # Normal conversation is always the main agent. Multi-agent work is a
+    # one-shot delegation selected by the UI (or an explicit slash command),
+    # never a sticky environment inferred from the wording of later turns.
     timer = EvalTimer() if _eval_enabled() else None
     recorder = EvalRecorder() if _eval_enabled() else None
     begin_turn_eval()
@@ -79,7 +91,7 @@ def dispatch_turn(
             TradeReviewOrchestrator(ctx.root, client, hooks).run(query, messages, ctx)
             return
 
-        ui.info(f"多 Agent 模式: {mode.value}")
+        ui.info(f"协作任务已启动: {mode.value}")
         ResearchOrchestrator(ctx.root, client, hooks).run(
             query, messages, ctx, mode=mode,
         )

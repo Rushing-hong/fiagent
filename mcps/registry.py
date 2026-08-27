@@ -27,6 +27,9 @@ class MCPRegistry:
         self.config_path = mcp_dir / "mcp.json"
         self._tools: list[MCPTool] = []
         self._servers: list[MCPServer] = []
+        self._configured_tool_names: set[str] = set()
+        self._enabled_tool_names: set[str] = set()
+        self.generation = 0
         self.refresh()
 
     def _load_config(self) -> dict:
@@ -57,6 +60,8 @@ class MCPRegistry:
         disabled_tools = get_disabled_mcp_tools()
         self._servers = []
         self._tools = []
+        self._configured_tool_names = set()
+        self._enabled_tool_names = set()
         for server_id, server_cfg in (config.get("servers") or {}).items():
             if not isinstance(server_cfg, dict):
                 continue
@@ -74,6 +79,7 @@ class MCPRegistry:
                     server_id=str(server_id),
                 )
                 tools.append(mcp_tool)
+                self._configured_tool_names.add(mcp_tool.name)
             server = MCPServer(
                 id=str(server_id),
                 enabled=enabled,
@@ -85,6 +91,8 @@ class MCPRegistry:
                 for t in tools:
                     if t.name not in disabled_tools:
                         self._tools.append(t)
+                        self._enabled_tool_names.add(t.name)
+        self.generation += 1
 
     def servers(self) -> list[MCPServer]:
         return list(self._servers)
@@ -114,6 +122,12 @@ class MCPRegistry:
     def all(self) -> list[MCPTool]:
         """当前生效的 MCP 工具（server 开 + tool 未禁用）。"""
         return list(self._tools)
+
+    def is_configured(self, name: str) -> bool:
+        return name in self._configured_tool_names
+
+    def is_enabled(self, name: str) -> bool:
+        return name in self._enabled_tool_names
 
     def build_schemas(self) -> list[dict]:
         # 真实 MCP 调用未实现前不注入 schema，避免模型点选 stub

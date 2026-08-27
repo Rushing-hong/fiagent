@@ -1,4 +1,4 @@
-"""Live agent-team progress events for Web SSE."""
+"""Live collaboration-task events for the Web SSE stream."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ def set_progress_emitter(fn: Callable[[dict[str, Any]], None] | None) -> None:
     _emit = fn
 
 
-def emit_agent_progress(payload: dict[str, Any]) -> None:
+def emit_collaboration_progress(payload: dict[str, Any]) -> None:
     if _emit is None:
         return
     try:
-        _emit({"type": "agent_team", **payload})
+        _emit({"type": "collaboration", **payload})
     except Exception:
         pass

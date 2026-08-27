@@ -45,8 +45,8 @@ def _research_max_workers() -> int:
 
 def _emit_progress(payload: dict) -> None:
     try:
-        from ui.web.agent_progress import emit_agent_progress
-        emit_agent_progress(payload)
+        from ui.web.collaboration_progress import emit_collaboration_progress
+        emit_collaboration_progress(payload)
     except Exception:
         pass
 
@@ -65,6 +65,14 @@ _RESEARCHER_KEYS = {
 
 def _red_team_enabled() -> bool:
     return os.getenv("FIAGENT_RESEARCH_RED_TEAM", "1").strip() not in ("0", "false", "no")
+
+
+def _failed_report_keys(reports: dict[str, str]) -> list[str]:
+    return [
+        key
+        for key, value in reports.items()
+        if key != "research_done" and (value or "").startswith("失败:")
+    ]
 
 
 class ResearchOrchestrator:
@@ -104,6 +112,7 @@ class ResearchOrchestrator:
         _emit_progress({
             "phase": "start",
             "run_id": run.id,
+            "query": query,
             "mode": mode.value,
             "workflow": team.workflow_id,
             "researchers": team.researchers,
@@ -114,6 +123,18 @@ class ResearchOrchestrator:
             return self._run_pipeline(
                 run, query, mode, team, messages, ctx,
             )
+        except Exception as exc:
+            # Never leave interrupted/failed runs looking active forever.
+            self.evidence.finish_run(run.id, "failed")
+            _emit_progress({
+                "phase": "complete",
+                "run_id": run.id,
+                "mode": mode.value,
+                "status": "failed",
+                "failed_count": 1,
+                "error": str(exc)[:500],
+            })
+            raise
         finally:
             set_research_run_active(False)
 
@@ -162,15 +183,17 @@ class ResearchOrchestrator:
                     pit_safe_for_backtest=bool(pit_state["ok"]),
                     evidence_items=pit_state["items"],
                 )
-                content = result.content if result.success else f"失败: {result.error}"
+                content = result.content or ""
                 if result.validation_errors:
                     content += "\n\n> 结构化校验: " + "; ".join(result.validation_errors)
+                if not result.success and not content.strip():
+                    content = f"失败: {result.error or 'Agent 未完成'}"
                 self.evidence.save_report(
                     run.id, agent_name, content,
                     task_id=task_id,
                     structured=result.structured,
                 )
-                if result.structured:
+                if result.success and result.structured:
                     self.evidence.save_claim(
                         run.id, agent_name, "research_card", result.structured,
                     )
@@ -190,8 +213,11 @@ class ResearchOrchestrator:
                 })
                 if result.success and on_ok:
                     on_ok(content, result)
-                reports[key] = content
-                return content
+                downstream = content
+                if not result.success:
+                    downstream = f"失败: {result.error or 'Agent 未完成'}"
+                reports[key] = downstream
+                return downstream
             finally:
                 self.evidence.close_thread()
 
@@ -340,15 +366,14 @@ class ResearchOrchestrator:
         synthesis = self._synthesize(
             query, reports, policy_brief, messages, run.id, mode, profiles["orchestrator"],
         )
-        self.evidence.finish_run(run.id, "completed")
-        failed_keys = [
-            k for k, v in reports.items()
-            if k != "research_done" and (v or "").startswith("失败:")
-        ]
+        failed_keys = _failed_report_keys(reports)
+        run_status = "partial" if failed_keys else "completed"
+        self.evidence.finish_run(run.id, run_status)
         _emit_progress({
             "phase": "complete",
             "run_id": run.id,
             "mode": mode.value,
+            "status": run_status,
             "failed_count": len(failed_keys),
             "failed_keys": failed_keys,
         })
@@ -576,17 +601,8 @@ class ResearchOrchestrator:
         brief = "\n\n".join(parts)
         cio_ctx = AgentContext(self.root, profile=cio_profile)
         cio_ctx.refresh()
-        cio_messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": "\n\n".join([
-                    cio_profile.system_prompt,
-                    cio_ctx.build_time_context(),
-                    cio_ctx.build_capabilities_index(),
-                ]),
-            },
-            {"role": "user", "content": brief},
-        ]
+        cio_messages: list[dict[str, Any]] = cio_ctx.fresh_messages()
+        cio_messages.append({"role": "user", "content": brief})
 
         set_run_context(ResearchRunContext(run_id, self.evidence, "orchestrator"))
         try:
@@ -613,8 +629,20 @@ class ResearchOrchestrator:
                         {"target_weight": w, "stance": claim.get("stance")},
                     )
 
-        messages.append({"role": "user", "content": brief})
-        messages.append({"role": "assistant", "content": final})
+        # Keep the main conversation natural: the user already asked ``query``
+        # in the parent thread.  The large internal synthesis brief belongs to
+        # the isolated CIO context and must not be replayed on every later turn.
+        messages.append({
+            "role": "assistant",
+            "content": final,
+            "_fiagent": {
+                "collaboration": {
+                    "run_id": run_id,
+                    "mode": mode.value,
+                    "query": query,
+                }
+            },
+        })
         self.evidence.save_report(
             run_id, "orchestrator", final,
             structured=validation.get("structured"),
